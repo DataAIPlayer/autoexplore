@@ -4,8 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,7 +26,7 @@ class Progress:
 
 
 def save_progress(model_dir: Path, progress: Progress) -> None:
-    progress.updated_at = datetime.now(timezone.utc).isoformat()
+    progress = replace(progress, updated_at=datetime.now(timezone.utc).isoformat())
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / PROGRESS_FILE).write_text(
         json.dumps(asdict(progress), ensure_ascii=False, indent=2)
