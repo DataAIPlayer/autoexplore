@@ -23,6 +23,14 @@ json.dump({"metrics": {}}, open(a.out, "w"))  # 缺 primary_metric
 
 CRASH_EVAL = 'raise SystemExit("eval boom")'
 
+NON_NUMERIC_EVAL = '''
+import argparse, json
+ap = argparse.ArgumentParser()
+ap.add_argument("--predictions"); ap.add_argument("--dataset"); ap.add_argument("--out")
+a = ap.parse_args()
+json.dump({"primary_metric": "high"}, open(a.out, "w"))  # 非数字
+'''
+
 def _setup(tmp_path, eval_src, n_preds=9):
     (tmp_path / "evaluate.py").write_text(eval_src)
     (tmp_path / "dataset").mkdir()
@@ -46,4 +54,9 @@ def test_missing_primary_metric_raises(tmp_path):
 def test_eval_crash_raises(tmp_path):
     eval_py, preds, ds = _setup(tmp_path, CRASH_EVAL)
     with pytest.raises(MetricsError, match="evaluate.py 执行失败"):
+        compute_metrics(eval_py, preds, ds, tmp_path / "m.json")
+
+def test_non_numeric_primary_metric_raises(tmp_path):
+    eval_py, preds, ds = _setup(tmp_path, NON_NUMERIC_EVAL)
+    with pytest.raises(MetricsError, match="必须是数字"):
         compute_metrics(eval_py, preds, ds, tmp_path / "m.json")
