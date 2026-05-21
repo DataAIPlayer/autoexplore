@@ -1,5 +1,4 @@
 from unittest import mock
-import subprocess
 from pathlib import Path
 from scripts.run_inference import run_inference, INNER_PREDICTIONS_PATH
 
