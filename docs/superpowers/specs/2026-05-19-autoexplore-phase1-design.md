@@ -48,7 +48,7 @@ autoexplore/
                 ├── progress.json # 复现状态:阶段/重试次数/最后错误
                 ├── run.log       # 运行输出(隔离,不污染上下文)
                 ├── Dockerfile    # 该模型的环境
-                └── predictions/  # 推理输出
+                └── predictions.jsonl  # 推理输出(每行一条 JSON)
 ```
 
 ### 关键设计点
@@ -68,7 +68,7 @@ autoexplore/
 | 4 | 寻找开源模型 | J | 检索(HF / paperswithcode / arxiv),收集候选 |
 | 5 | 优先级排序,选 ≤3 | J | 按官方披露效果排序 → 写 `candidates.json`(name, repo, reported_score, priority) |
 | 6–7 | 逐个复现(复现循环) | S + J | 对每个候选进入复现循环(见第 5 节),产出可运行容器环境 |
-| 8 | 测试集推理 | S | `run_inference.py` 在容器内对 `dataset/` 跑推理 → `predictions/` |
+| 8 | 测试集推理 | S | `run_inference.py` 在容器内对 `dataset/` 跑推理 → `predictions.jsonl` |
 | 9 | 计算指标 | S | `compute_metrics.py` 调 `evaluate.py` → `models/<name>/metrics.json` |
 | 10 | 选最佳模型 | S + J | `progress.py` 汇总各模型指标到 `results.tsv`;Claude 据此选出最佳 |
 

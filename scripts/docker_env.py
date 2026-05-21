@@ -12,7 +12,11 @@ class DockerError(RuntimeError):
 
 
 def check_runtime() -> None:
-    """验证 docker 可用且支持 GPU,缺失则 fail fast。"""
+    """验证 docker CLI/daemon 可用,缺失则 fail fast。
+
+    只检查 `docker info` 成功;NVIDIA runtime 的实际可用性留给首次
+    带 --gpus 的容器运行验证(见 tests/test_smoke_gpu.py)。
+    """
     try:
         info = subprocess.run(
             ["docker", "info"], capture_output=True, text=True
