@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# uv
+# uv.lock is committed for reproducible installs
+
+# autoexplore runs (per-run working dirs are local artifacts, not source)
+runs/
