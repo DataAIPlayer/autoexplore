@@ -49,7 +49,7 @@ def build_run_command(
 ) -> list[str]:
     cmd = ["docker", "run", "--rm"]
     if gpus:
-        cmd += ["--gpus", f'"device={gpus}"']
+        cmd += ["--gpus", f"device={gpus}"]
     for host, container in mounts:
         cmd += ["-v", f"{host}:{container}"]
     cmd += [image, "sh", "-c", inner_cmd]

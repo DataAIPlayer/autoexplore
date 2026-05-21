@@ -45,7 +45,7 @@ def test_build_run_command_passes_gpus_and_mounts():
     assert "--rm" in cmd
     assert "--gpus" in cmd
     gi = cmd.index("--gpus")
-    assert cmd[gi + 1] == '"device=2,5"'
+    assert cmd[gi + 1] == "device=2,5"
     assert "-v" in cmd
     vi = cmd.index("-v")
     assert cmd[vi + 1] == "/host/run:/work"
@@ -66,3 +66,10 @@ def test_check_runtime_raises_without_docker():
     with mock.patch("subprocess.run", side_effect=FileNotFoundError()):
         with pytest.raises(DockerError, match="找不到 docker"):
             check_runtime()
+
+def test_build_image_raises_on_build_failure(tmp_path):
+    with mock.patch("scripts.docker_env.image_exists", return_value=False), \
+         mock.patch("subprocess.run") as m:
+        m.return_value = subprocess.CompletedProcess([], 1, "", "build broke")
+        with pytest.raises(DockerError, match="镜像构建失败"):
+            build_image("autoexplore/llava", tmp_path)
