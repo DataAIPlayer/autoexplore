@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, asdict, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +23,8 @@ class Progress:
     image_tag: str = ""
     last_error: str = ""
     updated_at: str = ""
+    # 推理配置快照 (steps/resolution/layers/shards 等),便于"是配置变了还是网络抖了"的复盘
+    infer_config: dict[str, str] = field(default_factory=dict)
 
 
 def save_progress(model_dir: Path, progress: Progress) -> None:
@@ -37,7 +39,10 @@ def load_progress(model_dir: Path) -> Progress | None:
     path = model_dir / PROGRESS_FILE
     if not path.exists():
         return None
-    return Progress(**json.loads(path.read_text()))
+    data = json.loads(path.read_text())
+    # 向后兼容:旧 progress.json 没有 infer_config 字段
+    data.setdefault("infer_config", {})
+    return Progress(**data)
 
 
 def is_done(model_dir: Path) -> bool:
@@ -82,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--gpus", default="")
     s.add_argument("--image-tag", default="")
     s.add_argument("--last-error", default="")
+    s.add_argument("--infer-config", action="append", default=[],
+                   help="KEY=VAL,可重复 (steps/resolution/layers/shards 等)")
 
     g = sub.add_parser("done", help="查询模型是否处于终态,done 退出 0 否则 1")
     g.add_argument("--model-dir", type=Path, required=True)
@@ -96,9 +103,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     if args.cmd == "set":
+        cfg = dict(kv.split("=", 1) for kv in args.infer_config) if args.infer_config else {}
         save_progress(args.model_dir, Progress(
             model=args.model, stage=args.stage, retry_count=args.retry_count,
             gpus=args.gpus, image_tag=args.image_tag, last_error=args.last_error,
+            infer_config=cfg,
         ))
         return 0
     if args.cmd == "done":

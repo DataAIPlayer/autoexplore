@@ -49,3 +49,25 @@ def test_append_result_crash_formatting(tmp_path):
     append_result(tmp_path, "x", 0.0, 0.0, "crash", "OOM")
     rows = read_results(tmp_path)
     assert rows[1] == ["x", "0.000000", "0.0", "crash", "OOM"]
+
+def test_infer_config_roundtrip(tmp_path):
+    p = Progress(
+        model="qwen-image-layered", stage="ready",
+        infer_config={"steps": "30", "resolution": "640", "layers": "8", "shards": "3"},
+    )
+    save_progress(tmp_path, p)
+    loaded = load_progress(tmp_path)
+    assert loaded.infer_config == {
+        "steps": "30", "resolution": "640", "layers": "8", "shards": "3",
+    }
+
+def test_load_old_progress_without_infer_config(tmp_path):
+    # 旧 progress.json (没有 infer_config 字段) 仍然能加载,字段默认为空 dict
+    legacy = {
+        "model": "old", "stage": "ready", "retry_count": 0,
+        "gpus": "0", "image_tag": "autoexplore/old", "last_error": "",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    (tmp_path / "progress.json").write_text(json.dumps(legacy))
+    loaded = load_progress(tmp_path)
+    assert loaded.infer_config == {}

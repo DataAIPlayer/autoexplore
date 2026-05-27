@@ -49,11 +49,21 @@ def build_image(tag: str, dockerfile_dir: Path) -> bool:
 
 
 def build_run_command(
-    image: str, gpus: str, mounts: list[tuple[str, str]], inner_cmd: str
+    image: str, gpus: str, mounts: list[tuple[str, str]], inner_cmd: str,
+    *,
+    env: dict[str, str] | None = None,
+    user: str | None = None,
+    runtime: str | None = None,
 ) -> list[str]:
     cmd = ["docker", "run", "--rm"]
+    if runtime:
+        cmd += [f"--runtime={runtime}"]
+    if user:
+        cmd += ["--user", user]
     if gpus:
         cmd += ["--gpus", f"device={gpus}"]
+    for k, v in (env or {}).items():
+        cmd += ["-e", f"{k}={v}"]
     for host, container in mounts:
         cmd += ["-v", f"{host}:{container}"]
     cmd += [image, "sh", "-c", inner_cmd]
@@ -63,9 +73,16 @@ def build_run_command(
 def run_in_container(
     image: str, gpus: str, mounts: list[tuple[str, str]],
     inner_cmd: str, log_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+    user: str | None = None,
+    runtime: str | None = None,
 ) -> int:
     """跑容器,stdout+stderr 重定向到 log_path,返回退出码。"""
-    cmd = build_run_command(image, gpus, mounts, inner_cmd)
+    cmd = build_run_command(
+        image, gpus, mounts, inner_cmd,
+        env=env, user=user, runtime=runtime,
+    )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
         proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
@@ -86,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--tag", required=True)
     r.add_argument("--gpus", default="")
     r.add_argument("--mount", action="append", default=[], help="host:container")
+    r.add_argument("--env", action="append", default=[], help="KEY=VAL,可重复")
+    r.add_argument("--user", default=None, help="UID:GID,容器内身份")
+    r.add_argument("--runtime", default=None, help="docker --runtime,如 nvidia")
     r.add_argument("--log", type=Path, required=True)
     r.add_argument("--inner-cmd", required=True)
 
@@ -101,8 +121,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.cmd == "run":
             mounts = [tuple(m.split(":", 1)) for m in args.mount]
+            env_dict = dict(kv.split("=", 1) for kv in args.env) if args.env else None
             rc = run_in_container(
-                args.tag, args.gpus, mounts, args.inner_cmd, args.log
+                args.tag, args.gpus, mounts, args.inner_cmd, args.log,
+                env=env_dict, user=args.user, runtime=args.runtime,
             )
             print(f"exit_code: {rc}")
             return rc

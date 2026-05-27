@@ -73,3 +73,28 @@ def test_build_image_raises_on_build_failure(tmp_path):
         m.return_value = subprocess.CompletedProcess([], 1, "", "build broke")
         with pytest.raises(DockerError, match="镜像构建失败"):
             build_image("autoexplore/llava", tmp_path)
+
+
+def test_build_run_command_with_env_user_runtime():
+    cmd = build_run_command(
+        image="autoexplore/llava", gpus="4",
+        mounts=[("/host/run", "/work"), ("/host/cache", "/cache:ro")],
+        inner_cmd="python infer.py",
+        env={"HF_HOME": "/cache/huggingface", "PYTHONUNBUFFERED": "1"},
+        user="1001:1001",
+        runtime="nvidia",
+    )
+    # 排序: docker run --rm --runtime=X --user U:G --gpus device=... -e K=V -v h:c IMG sh -c CMD
+    assert cmd[:3] == ["docker", "run", "--rm"]
+    assert "--runtime=nvidia" in cmd
+    assert cmd.index("--runtime=nvidia") < cmd.index("--user")
+    ui = cmd.index("--user")
+    assert cmd[ui + 1] == "1001:1001"
+    gi = cmd.index("--gpus")
+    assert cmd[gi + 1] == "device=4"
+    # env: 必须包含两个 -e KEY=VAL
+    env_idxs = [i for i, t in enumerate(cmd) if t == "-e"]
+    env_pairs = {cmd[i + 1] for i in env_idxs}
+    assert env_pairs == {"HF_HOME=/cache/huggingface", "PYTHONUNBUFFERED=1"}
+    # 镜像 + 内层命令尾部不变
+    assert cmd[-4:] == ["autoexplore/llava", "sh", "-c", "python infer.py"]
