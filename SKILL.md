@@ -18,14 +18,21 @@ description: Use when reproducing open-source models for a research direction �
 3. **设计指标**:写 `runs/<tag>/evaluate.py`,接口为
    `python evaluate.py --predictions <jsonl> --dataset <dir> --out <metrics.json>`,
    输出 `{"primary_metric": <float>, "metrics": {...}}`。**人工确认后冻结。**
-   在 `plan.md` 里约定 predictions.jsonl 的每行 JSON 字段(供推理脚本与 evaluate.py 共同遵守)。
+   在 `plan.md` 里约定 predictions.jsonl 的字段:
+   - 文件落 `<model_dir>/predictions.jsonl`(与 `run_inference.py` 的契约一致)。
+   - 每行 `alpha`/层文件路径**相对于 jsonl 所在目录**。推理脚本约定把层写到 `<model_dir>/predictions/<image_id>/L*.png`,jsonl 里写 `predictions/<image_id>/L*.png`。
 
-把步骤 1–3 的结论都写进 `plan.md`,得到用户确认后再进入步骤 4。之后尽量自主,不再逐步问人。
+**3.5 GT 自检(必做):** 冻结 dataset/ 与 evaluate.py 之前,把 GT 当 prediction 喂回 evaluate.py(每个样本的 layers 复制成一份 predictions/,按 jsonl schema 写入)。primary_metric 必须 = 1.0、n_skipped = 0;不为 1 说明 GT 渲染或指标实现里有 bug,先修再冻结——避免在 90 张样本跑完后才发现指标算错。
+
+把步骤 1–3.5 的结论都写进 `plan.md`,得到用户确认后再进入步骤 4。之后尽量自主,不再逐步问人。
 
 ### 步骤 4–5:搜索与排序模型
 
 4. **搜索**:在 Hugging Face、paperswithcode、arxiv 检索该方向可用开源模型。
-5. **排序**:按官方披露效果自高到低排序,选 ≤3 个,写 `runs/<tag>/candidates.json`:
+5. **排序**:按下列综合考量自高到低,选 ≤3 个,写 `runs/<tag>/candidates.json`:
+   - **(a) 公开权重**:无公开权重的不进候选(v1 不训练)。
+   - **(b) 任务匹配度**:输入/输出格式与本方向一致;需要额外输入(如 mask)的折一档。
+   - **(c) 官方报分**:同基准/同协议时才直接比;不同协议(soft IoU vs hard IoU, DTW vs Hungarian)不要直接比。
    ```json
    [{"name": "...", "repo": "...", "reported_score": 0.0, "priority": 1}]
    ```
@@ -44,8 +51,10 @@ description: Use when reproducing open-source models for a research direction �
 - `dataset/` 与 `evaluate.py` 人工确认后**不可变**,保证模型间可比。
 - 容器输出进 `run.log`,只在失败时 tail,不污染上下文。
 - 每模型重试上限 3 次,失败标 `crash` 但不阻塞其他模型。
-- 复现串行,一次一个(第一版不并行、不训练)。
+- 复现**模型间**串行,一次一个(第一版不训练);**模型内**当 smoke 单样本 > 60 s 时可按 GPU 数分片并行,见 [references/reproduction-loop.md](references/reproduction-loop.md) "加速:单模型 N-GPU 分片"。
 - 中断可恢复:复现循环开始读 `progress.json`,跳过已 ready/crash 的模型。
+- **容器纪律**:每次 `docker run` 都带 `--user $UID:$GID --runtime=nvidia`(host 默认 runtime 不是 nvidia 时,torch.cuda 不带 `--runtime=nvidia` 直接失效;不带 `--user` 写出的预测全是 root 所有,后续 host 操作权限不足)。
+- **Cache 落项目目录**:所有模型权重 / 数据下载到 `<repo_root>/caches/{modelscope,huggingface,torch}`,预取脚本用对应 SDK 的 `cache_dir=` 参数显式指向,**不依赖 `~/.cache/`**。这三个 cache 子目录以 `:ro` 挂载到 `/cache/{modelscope,huggingface,torch}`,并通过 env 注入 `MODELSCOPE_CACHE`/`HF_HOME`/`TORCH_HOME` 指向容器内挂载点。`HF_MODULES_CACHE=/tmp/hf_modules` 在容器内单独给 `trust_remote_code` 模型一个可写位置。
 
 ## 脚本速查
 

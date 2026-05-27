@@ -9,3 +9,6 @@ __pycache__/
 
 # autoexplore runs (per-run working dirs are local artifacts, not source)
 runs/
+
+# Project-local model / dataset caches (see SKILL.md "Cache 落项目目录")
+caches/
