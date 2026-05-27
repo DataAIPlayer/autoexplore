@@ -1,0 +1,16 @@
+[project]
+name = "autoexplore"
+version = "0.1.0"
+description = "自动复现与优化开源模型的 agent (第一阶段)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: 需真实 Docker + GPU 环境,默认在开发机跳过",
+]
+addopts = "-m 'not gpu'"
+testpaths = ["tests"]
