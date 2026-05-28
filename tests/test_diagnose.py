@@ -61,6 +61,53 @@ def test_diagnose_handles_messy_group_values(toy_run, tmp_path):
     assert out["groups"]["fmt"]["c d"] == pytest.approx(0.2)
 
 
+def test_detect_id_field_picks_subdir_matching_unique_key(tmp_path):
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    samples = [{"uid": "u1", "bucket": "x"}, {"uid": "u2", "bucket": "y"}]
+    for s in samples:
+        (ds / s["uid"]).mkdir()
+    # bucket 值唯一但不对应子目录;uid 唯一且对应子目录 → 选 uid
+    assert diagnose._detect_id_field(samples, ds) == "uid"
+
+
+def test_diagnose_generic_id_field(tmp_path):
+    # 数据集用 'uid' 而非 image_id 标识样本,diagnose 应自动探测,不绑死字段名
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    samples = [{"uid": "u1", "bucket": "x"}, {"uid": "u2", "bucket": "y"}]
+    (ds / "metadata.json").write_text(json.dumps({"samples": samples}))
+    for s in samples:
+        (ds / s["uid"]).mkdir()
+        (ds / s["uid"] / "meta.json").write_text(json.dumps({"uid": s["uid"]}))
+    ev = tmp_path / "evaluate.py"
+    ev.write_text(
+        "import argparse, json\n"
+        "from pathlib import Path\n"
+        "ap = argparse.ArgumentParser()\n"
+        "ap.add_argument('--predictions', type=Path)\n"
+        "ap.add_argument('--dataset', type=Path)\n"
+        "ap.add_argument('--out', type=Path)\n"
+        "a = ap.parse_args()\n"
+        "preds = {}\n"
+        "for line in a.predictions.open():\n"
+        "    line = line.strip()\n"
+        "    if line:\n"
+        "        o = json.loads(line); preds[o['uid']] = o\n"
+        "ids = [s['uid'] for s in json.loads((a.dataset/'metadata.json').read_text())['samples']]\n"
+        "sc = [float(preds.get(i, {}).get('score', 0.0)) for i in ids]\n"
+        "p = sum(sc)/len(sc) if sc else 0.0\n"
+        "a.out.write_text(json.dumps({'primary_metric': p, 'metrics': {'n': len(ids)}}))\n"
+    )
+    preds = tmp_path / "p.jsonl"
+    with preds.open("w") as f:
+        f.write(json.dumps({"uid": "u1", "score": 0.8}) + "\n")
+        f.write(json.dumps({"uid": "u2", "score": 0.2}) + "\n")
+    out = diagnose.diagnose(preds, ds, ev, worst_k=2, work_dir=tmp_path / "w")
+    assert [w["id"] for w in out["worst_k"]] == ["u2", "u1"]   # 自动用 uid 逐样本
+    assert out["groups"]["bucket"]["x"] == pytest.approx(0.8)  # 分组排除 uid
+
+
 def test_diagnose_cli_writes_json_and_md(toy_run, tmp_path):
     preds = toy_run / "predictions" / "predictions.jsonl"
     write_predictions(preds, {"s1": 0.9, "s2": 0.1, "s3": 0.5})
