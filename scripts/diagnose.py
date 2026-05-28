@@ -1,0 +1,126 @@
+"""短板诊断 (只读,不改冻结 evaluate.py)。把 evaluate.py 当黑盒,
+在 dataset 子集视图上反复调用,定位主干短板。绝不重实现指标。"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def _run_evaluate(evaluate_py: Path, predictions: Path, dataset_view: Path,
+                  out_json: Path) -> dict:
+    subprocess.run([sys.executable, str(evaluate_py),
+                    "--predictions", str(predictions),
+                    "--dataset", str(dataset_view),
+                    "--out", str(out_json)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    return json.loads(out_json.read_text())
+
+
+def _make_view(dataset_dir: Path, sample_ids: list[str], view_dir: Path) -> None:
+    """建子集视图:子集化 metadata.json + symlink 样本目录。原 dataset 不动。"""
+    view_dir.mkdir(parents=True, exist_ok=True)
+    meta = json.loads((dataset_dir / "metadata.json").read_text())
+    keep = set(sample_ids)
+    sub = {k: v for k, v in meta.items() if k != "samples"}
+    sub["samples"] = [s for s in meta["samples"] if s["image_id"] in keep]
+    (view_dir / "metadata.json").write_text(json.dumps(sub, ensure_ascii=False))
+    for sid in sample_ids:
+        link = view_dir / sid
+        if not link.exists():
+            os.symlink((dataset_dir / sid).resolve(), link)
+
+
+def _detect_group_fields(samples: list[dict], max_card_ratio: float = 0.5) -> list[str]:
+    """自动探测可分组的分类字段:所有样本都有、值为 str/int/bool、2≤基数≤0.5*n。"""
+    n = len(samples)
+    if n == 0:
+        return []
+    keys = set().union(*[set(s.keys()) for s in samples]) - {"image_id"}
+    fields = []
+    for k in sorted(keys):
+        vals = [s.get(k) for s in samples if isinstance(s.get(k), (str, int, bool))]
+        if len(vals) != n:
+            continue
+        distinct = set(vals)
+        if 2 <= len(distinct) <= max(2, int(n * max_card_ratio)):
+            fields.append(k)
+    return fields
+
+
+def diagnose(predictions: Path, dataset_dir: Path, evaluate_py: Path,
+             worst_k: int = 10, work_dir: Path | None = None) -> dict:
+    meta = json.loads((dataset_dir / "metadata.json").read_text())
+    samples = meta["samples"]
+    ids = [s["image_id"] for s in samples]
+    tmp = Path(work_dir or tempfile.mkdtemp(prefix="diag_"))
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    full = _run_evaluate(evaluate_py, predictions, dataset_dir, tmp / "full.json")
+
+    per_sample = []
+    for sid in ids:
+        v = tmp / f"view_{sid}"
+        _make_view(dataset_dir, [sid], v)
+        r = _run_evaluate(evaluate_py, predictions, v, tmp / f"s_{sid}.json")
+        per_sample.append({"id": sid, "primary": r["primary_metric"]})
+    per_sample.sort(key=lambda x: x["primary"])
+    worst = per_sample[:worst_k]
+
+    groups: dict[str, dict] = {}
+    for field in _detect_group_fields(samples):
+        by_val: dict[str, list[str]] = {}
+        for s in samples:
+            by_val.setdefault(str(s[field]), []).append(s["image_id"])
+        gmap = {}
+        for val, sids in by_val.items():
+            v = tmp / f"view_{field}_{val}"
+            _make_view(dataset_dir, sids, v)
+            r = _run_evaluate(evaluate_py, predictions, v, tmp / f"g_{field}_{val}.json")
+            gmap[val] = r["primary_metric"]
+        groups[field] = gmap
+
+    return {"full": full, "per_sample": per_sample, "worst_k": worst,
+            "groups": groups, "secondary_summary": full.get("metrics", {})}
+
+
+def _to_md(diag: dict) -> str:
+    lines = ["# 短板诊断", "",
+             f"- primary_metric (全集): {diag['full']['primary_metric']:.6f}",
+             "- 副指标: " + json.dumps(diag["secondary_summary"], ensure_ascii=False),
+             "", "## 最差样本 (worst-K)"]
+    for w in diag["worst_k"]:
+        lines.append(f"- {w['id']}: {w['primary']:.6f}")
+    if diag["groups"]:
+        lines.append("\n## 分组得分")
+        for field, gmap in diag["groups"].items():
+            lines.append(f"### {field}")
+            for val, sc in sorted(gmap.items(), key=lambda kv: kv[1]):
+                lines.append(f"- {val}: {sc:.6f}")
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="短板诊断 (黑盒调用冻结 evaluate.py)")
+    ap.add_argument("--predictions", type=Path, required=True)
+    ap.add_argument("--dataset", type=Path, required=True)
+    ap.add_argument("--evaluate-py", type=Path, required=True)
+    ap.add_argument("--out-json", type=Path, required=True)
+    ap.add_argument("--out-md", type=Path, required=True)
+    ap.add_argument("--worst-k", type=int, default=10)
+    args = ap.parse_args(argv)
+    diag = diagnose(args.predictions, args.dataset, args.evaluate_py, args.worst_k)
+    args.out_json.parent.mkdir(parents=True, exist_ok=True)
+    args.out_json.write_text(json.dumps(diag, ensure_ascii=False, indent=2))
+    args.out_md.write_text(_to_md(diag))
+    print(f"diagnosed: primary={diag['full']['primary_metric']:.6f}, "
+          f"worst={len(diag['worst_k'])}, groups={list(diag['groups'])}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
