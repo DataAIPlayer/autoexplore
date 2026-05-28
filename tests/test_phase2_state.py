@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -168,3 +170,39 @@ def test_append_phase2_result_schema(toy_run):
     assert rows[1][0] == "r001" and rows[1][1] == "exp_a"
     assert rows[1][4] == "12.50" and rows[1][5] == "keep"
     assert rows[2][4] == "" and rows[2][5] == "crash"   # delta_pct=None → 空
+
+
+def test_cli_init_and_resume(toy_run):
+    r = subprocess.run([sys.executable, "scripts/phase2_state.py", "init",
+                        "--run-dir", str(toy_run), "--tag", "toy-tag"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    assert (toy_run / "phase2" / "state.json").exists()
+    r2 = subprocess.run([sys.executable, "scripts/phase2_state.py", "resume",
+                         "--run-dir", str(toy_run)], capture_output=True, text=True)
+    assert r2.returncode == 0
+    assert json.loads(r2.stdout)["action"] == "diagnose"
+
+
+def test_cli_gate(toy_run):
+    r = subprocess.run([sys.executable, "scripts/phase2_state.py", "gate",
+                        "--candidate", "0.42", "--backbone", "0.40"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    assert json.loads(r.stdout)["promote"] is True
+    r2 = subprocess.run([sys.executable, "scripts/phase2_state.py", "gate",
+                         "--candidate", "0.41", "--backbone", "0.40"],
+                        capture_output=True, text=True)
+    assert json.loads(r2.stdout)["promote"] is False
+
+
+def test_cli_dispatch(toy_run):
+    exps = json.dumps([{"slot": "a", "needs_gpus": 1, "is_training": True},
+                       {"slot": "b", "needs_gpus": 1, "is_training": False}])
+    r = subprocess.run([sys.executable, "scripts/phase2_state.py", "dispatch",
+                        "--experiments", exps, "--free-gpus", "0"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["assigned"] == {"b": [0]}
+    assert out["queued"] == ["a"]

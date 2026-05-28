@@ -215,3 +215,54 @@ def append_phase2_result(run_dir: Path, round_id: str, exp: str,
         dp = "" if delta_pct is None else f"{delta_pct:.2f}"
         w.writerow([round_id, exp, str(base_backbone_ver),
                     f"{primary_metric:.6f}", dp, status, description])
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Phase-2 状态机 CLI")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    si = sub.add_parser("init", help="从 results.tsv 初始化主干")
+    si.add_argument("--run-dir", type=Path, required=True)
+    si.add_argument("--tag", required=True)
+
+    sr = sub.add_parser("resume", help="打印下一步动作 JSON")
+    sr.add_argument("--run-dir", type=Path, required=True)
+
+    sg = sub.add_parser("gate", help="晋升门判定,打印 {promote: bool}")
+    sg.add_argument("--candidate", type=float, required=True)
+    sg.add_argument("--backbone", type=float, required=True)
+
+    sd = sub.add_parser("dispatch", help="按空闲卡派发,打印分配 JSON")
+    sd.add_argument("--experiments", required=True, help="JSON 数组字符串")
+    sd.add_argument("--free-gpus", required=True, help="逗号分隔 GPU id,如 0,1,2")
+
+    sb = sub.add_parser("backbone-get", help="打印当前主干 JSON")
+    sb.add_argument("--run-dir", type=Path, required=True)
+
+    args = ap.parse_args(argv)
+
+    if args.cmd == "init":
+        state = init_state(args.run_dir, args.tag)
+        print(json.dumps(state["backbone"], ensure_ascii=False))
+        return 0
+    if args.cmd == "resume":
+        state = load_state(args.run_dir) or {}
+        print(json.dumps(next_action(state), ensure_ascii=False))
+        return 0
+    if args.cmd == "gate":
+        print(json.dumps({"promote": is_significant(args.candidate, args.backbone)}))
+        return 0
+    if args.cmd == "dispatch":
+        exps = json.loads(args.experiments)
+        gpus = [int(x) for x in args.free_gpus.split(",") if x != ""]
+        print(json.dumps(plan_dispatch(exps, gpus), ensure_ascii=False))
+        return 0
+    if args.cmd == "backbone-get":
+        state = load_state(args.run_dir) or {}
+        print(json.dumps(state.get("backbone", {}), ensure_ascii=False))
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
