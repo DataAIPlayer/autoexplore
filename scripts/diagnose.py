@@ -13,12 +13,19 @@ from pathlib import Path
 
 def _run_evaluate(evaluate_py: Path, predictions: Path, dataset_view: Path,
                   out_json: Path) -> dict:
-    subprocess.run([sys.executable, str(evaluate_py),
-                    "--predictions", str(predictions),
-                    "--dataset", str(dataset_view),
-                    "--out", str(out_json)],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    return json.loads(out_json.read_text())
+    """黑盒调用冻结 evaluate.py。失败或缺 primary_metric 时报清晰错误(带视图名)。"""
+    proc = subprocess.run([sys.executable, str(evaluate_py),
+                           "--predictions", str(predictions),
+                           "--dataset", str(dataset_view),
+                           "--out", str(out_json)],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"evaluate.py 在视图 {dataset_view.name} 失败:\n{(proc.stderr or '').strip()}")
+    r = json.loads(out_json.read_text())
+    if "primary_metric" not in r:
+        raise RuntimeError(f"evaluate.py 输出缺 primary_metric (视图 {dataset_view.name})")
+    return r
 
 
 def _make_view(dataset_dir: Path, sample_ids: list[str], view_dir: Path) -> None:
@@ -31,7 +38,7 @@ def _make_view(dataset_dir: Path, sample_ids: list[str], view_dir: Path) -> None
     (view_dir / "metadata.json").write_text(json.dumps(sub, ensure_ascii=False))
     for sid in sample_ids:
         link = view_dir / sid
-        if not link.exists():
+        if not link.is_symlink():  # is_symlink 对断链也为真,避免 FileExistsError
             os.symlink((dataset_dir / sid).resolve(), link)
 
 
@@ -54,33 +61,45 @@ def _detect_group_fields(samples: list[dict], max_card_ratio: float = 0.5) -> li
 
 def diagnose(predictions: Path, dataset_dir: Path, evaluate_py: Path,
              worst_k: int = 10, work_dir: Path | None = None) -> dict:
+    """对当前主干的 predictions 做短板分解。返回值只含解析后的数值,不含临时文件路径,
+    因此 work_dir 缺省时用临时目录跑完即清理(不泄漏 /tmp)。"""
+    if work_dir is not None:
+        tmp = Path(work_dir)
+        tmp.mkdir(parents=True, exist_ok=True)
+        return _diagnose_into(tmp, predictions, dataset_dir, evaluate_py, worst_k)
+    with tempfile.TemporaryDirectory(prefix="diag_") as td:
+        return _diagnose_into(Path(td), predictions, dataset_dir, evaluate_py, worst_k)
+
+
+def _diagnose_into(tmp: Path, predictions: Path, dataset_dir: Path,
+                   evaluate_py: Path, worst_k: int) -> dict:
+    # 视图目录/输出文件一律用整数序号命名,避免 image_id / 分组值里的 '/' 空格
+    # 造成嵌套目录或命名冲突;真实 id / 分组值只作为返回数据的 key 保留。
     meta = json.loads((dataset_dir / "metadata.json").read_text())
     samples = meta["samples"]
     ids = [s["image_id"] for s in samples]
-    tmp = Path(work_dir or tempfile.mkdtemp(prefix="diag_"))
-    tmp.mkdir(parents=True, exist_ok=True)
 
     full = _run_evaluate(evaluate_py, predictions, dataset_dir, tmp / "full.json")
 
     per_sample = []
-    for sid in ids:
-        v = tmp / f"view_{sid}"
+    for i, sid in enumerate(ids):
+        v = tmp / f"view_s{i}"
         _make_view(dataset_dir, [sid], v)
-        r = _run_evaluate(evaluate_py, predictions, v, tmp / f"s_{sid}.json")
+        r = _run_evaluate(evaluate_py, predictions, v, tmp / f"s{i}.json")
         per_sample.append({"id": sid, "primary": r["primary_metric"]})
     per_sample.sort(key=lambda x: x["primary"])
     worst = per_sample[:worst_k]
 
     groups: dict[str, dict] = {}
-    for field in _detect_group_fields(samples):
+    for fi, field in enumerate(_detect_group_fields(samples)):
         by_val: dict[str, list[str]] = {}
         for s in samples:
             by_val.setdefault(str(s[field]), []).append(s["image_id"])
         gmap = {}
-        for val, sids in by_val.items():
-            v = tmp / f"view_{field}_{val}"
+        for gi, (val, sids) in enumerate(by_val.items()):
+            v = tmp / f"view_g{fi}_{gi}"
             _make_view(dataset_dir, sids, v)
-            r = _run_evaluate(evaluate_py, predictions, v, tmp / f"g_{field}_{val}.json")
+            r = _run_evaluate(evaluate_py, predictions, v, tmp / f"g{fi}_{gi}.json")
             gmap[val] = r["primary_metric"]
         groups[field] = gmap
 

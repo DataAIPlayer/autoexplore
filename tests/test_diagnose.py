@@ -43,6 +43,24 @@ def test_diagnose_full_per_sample_worst_and_groups(toy_run, tmp_path):
     assert out["groups"]["group"]["B"] == pytest.approx(0.5)
 
 
+def test_diagnose_handles_messy_group_values(toy_run, tmp_path):
+    # 分组值含 '/' 和空格,不应产生嵌套目录或崩溃,且真实值作为 key 保留
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    samples = [{"image_id": "s1", "fmt": "a/b"},
+               {"image_id": "s2", "fmt": "c d"}]
+    (ds / "metadata.json").write_text(json.dumps({"samples": samples}))
+    for s in samples:
+        (ds / s["image_id"]).mkdir()
+        (ds / s["image_id"] / "meta.json").write_text(json.dumps({"image_id": s["image_id"]}))
+    preds = tmp_path / "preds.jsonl"
+    write_predictions(preds, {"s1": 0.8, "s2": 0.2})
+    out = diagnose.diagnose(preds, ds, toy_run / "evaluate.py",
+                            worst_k=2, work_dir=tmp_path / "w")
+    assert out["groups"]["fmt"]["a/b"] == pytest.approx(0.8)
+    assert out["groups"]["fmt"]["c d"] == pytest.approx(0.2)
+
+
 def test_diagnose_cli_writes_json_and_md(toy_run, tmp_path):
     preds = toy_run / "predictions" / "predictions.jsonl"
     write_predictions(preds, {"s1": 0.9, "s2": 0.1, "s3": 0.5})
