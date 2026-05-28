@@ -116,3 +116,100 @@ def directions_add(run_dir: Path, state: dict, directions: list[dict]) -> dict:
             state["directions_tried"].append(fp)
     save_state(run_dir, state)
     return state
+
+
+def plan_dispatch(experiments: list[dict], free_gpus: list[int]) -> dict:
+    """按空闲卡为就绪实验派发 GPU。非训练优先,训练型卡不够则排队。
+    experiments: [{"slot","needs_gpus","is_training"}]; free_gpus: [gpu_id,...]。
+    返回 {"assigned": {slot: [gpu,...]}, "queued": [slot,...]}。"""
+    ordered = sorted(experiments, key=lambda e: (bool(e.get("is_training")), e["slot"]))
+    pool = list(free_gpus)
+    assigned: dict[str, list[int]] = {}
+    queued: list[str] = []
+    for e in ordered:
+        need = int(e.get("needs_gpus", 1))
+        if len(pool) >= need:
+            assigned[e["slot"]] = [pool.pop(0) for _ in range(need)]
+        else:
+            queued.append(e["slot"])
+    return {"assigned": assigned, "queued": queued}
+
+
+def _find_round(state: dict, round_id: str) -> dict:
+    for r in state["rounds"]:
+        if r["id"] == round_id:
+            return r
+    raise KeyError(round_id)
+
+
+def open_round(run_dir: Path, state: dict, directions: list[dict]) -> dict:
+    state["round_counter"] += 1
+    rid = f"r{state['round_counter']:03d}"
+    slots = [{"slot": d["slot"], "exp_dir": f"rounds/{rid}/exp_{d['slot']}",
+              "tier": d.get("tier", ""), "primary_metric": None,
+              "delta_pct": None, "status": "pending"} for d in directions]
+    state["rounds"].append({"id": rid, "status": "open", "slots": slots})
+    directions_add(run_dir, state, directions)  # 已含 save_state
+    return state
+
+
+def record_slot(run_dir: Path, state: dict, round_id: str, slot: str,
+                primary_metric: float, status: str) -> dict:
+    """status ∈ {done, crash}。done 的算 delta% vs 当前主干。全 slot 终态则轮转 scored。"""
+    rnd = _find_round(state, round_id)
+    bb = state["backbone"]["primary_metric"]
+    for s in rnd["slots"]:
+        if s["slot"] == slot:
+            s["primary_metric"] = primary_metric
+            s["delta_pct"] = ((primary_metric - bb) / bb * 100.0) if bb > 0 else None
+            s["status"] = status
+    if all(s["status"] in ("done", "crash") for s in rnd["slots"]):
+        rnd["status"] = "scored"
+    else:
+        rnd["status"] = "running"
+    save_state(run_dir, state)
+    return state
+
+
+def close_round(run_dir: Path, state: dict, round_id: str) -> dict:
+    _find_round(state, round_id)["status"] = "done"
+    save_state(run_dir, state)
+    return state
+
+
+def next_action(state: dict) -> dict:
+    """中断恢复决策:读 state 给出下一步动作。优先级见 spec §4 控制流。"""
+    if not state.get("backbone"):
+        return {"action": "init"}
+    if state["backbone"]["version_n"] != state.get("last_diagnosed_version", -1):
+        return {"action": "diagnose", "version_n": state["backbone"]["version_n"]}
+    if state.get("inference_tuning") == "pending":
+        return {"action": "infer_tune"}
+    rounds = state.get("rounds", [])
+    if not rounds or rounds[-1]["status"] == "done":
+        return {"action": "search"}
+    last = rounds[-1]
+    if last["status"] == "scored":
+        return {"action": "promote_check", "round": last["id"]}
+    return {"action": "execute", "round": last["id"]}
+
+
+PHASE2_RESULTS_HEADER = ["round", "exp", "base_backbone_ver", "primary_metric",
+                         "delta_pct", "status", "description"]
+
+
+def append_phase2_result(run_dir: Path, round_id: str, exp: str,
+                         base_backbone_ver: int, primary_metric: float,
+                         delta_pct: float | None, status: str,
+                         description: str) -> None:
+    """追加一行 phase2/results.tsv(7 列,扩展 phase-1 五列;append-only 研究日志)。"""
+    path = run_dir / "phase2" / "results.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists()
+    with path.open("a", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        if is_new:
+            w.writerow(PHASE2_RESULTS_HEADER)
+        dp = "" if delta_pct is None else f"{delta_pct:.2f}"
+        w.writerow([round_id, exp, str(base_backbone_ver),
+                    f"{primary_metric:.6f}", dp, status, description])
