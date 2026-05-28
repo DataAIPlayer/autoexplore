@@ -52,3 +52,16 @@ def test_run_with_budget_done(tmp_path):
     log = tmp_path / "train.log"
     status = tl.run_with_budget(["true"], log, gpus=[0], budget_seconds=5)
     assert status == "done"
+
+
+def test_run_with_budget_error_on_nonzero_exit(tmp_path):
+    log = tmp_path / "train.log"
+    status = tl.run_with_budget(["false"], log, gpus=[0], budget_seconds=5)
+    assert status == "error"
+
+
+def test_run_with_budget_error_when_launcher_missing(tmp_path):
+    log = tmp_path / "train.log"
+    status = tl.run_with_budget(["no_such_binary_xyz"], log, gpus=[0], budget_seconds=5)
+    assert status == "error"           # 启动器缺失不崩溃编排器
+    assert "not found" in log.read_text().lower()

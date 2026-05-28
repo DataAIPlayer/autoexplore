@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -37,18 +38,33 @@ def build_launch_cmd(train_py: Path, gpus: list[int], extra_args: list[str],
     return cmd
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """kill 整个进程组。torchrun 会派生 worker rank,只 kill launcher 会留孤儿占着 GPU,
+    阻塞后续实验;start_new_session 让 proc 自成进程组,这里整组 SIGKILL。"""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+    proc.wait()
+
+
 def run_with_budget(cmd: list[str], log_path: Path, gpus: list[int],
                     budget_seconds: int) -> str:
-    """跑命令,输出重定向到 log,超预算 kill。返回 'done'|'timeout'|'error'。"""
+    """跑命令,输出重定向到 log,超预算 kill 整个进程组。返回 'done'|'timeout'|'error'。
+    启动器不存在(如未装 torchrun)记 'error' 而非让编排器崩溃。"""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(map(str, gpus)))
     with open(log_path, "w") as log:
-        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
+        try:
+            proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                    env=env, start_new_session=True)
+        except FileNotFoundError as e:
+            log.write(f"launcher not found: {e}\n")
+            return "error"
         try:
             rc = proc.wait(timeout=budget_seconds)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            _kill_process_group(proc)
             return "timeout"
     return "done" if rc == 0 else "error"
 
