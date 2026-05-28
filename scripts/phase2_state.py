@@ -155,14 +155,16 @@ def open_round(run_dir: Path, state: dict, directions: list[dict]) -> dict:
 
 def record_slot(run_dir: Path, state: dict, round_id: str, slot: str,
                 primary_metric: float, status: str) -> dict:
-    """status ∈ {done, crash}。done 的算 delta% vs 当前主干。全 slot 终态则轮转 scored。"""
+    """status ∈ {done, crash}。完成的 slot 算 delta% vs 当前主干。全 slot 终态则轮转 scored。
+    slot 不存在于该轮时抛 KeyError(对齐 _find_round,fail loud 而非静默 no-op)。"""
     rnd = _find_round(state, round_id)
     bb = state["backbone"]["primary_metric"]
-    for s in rnd["slots"]:
-        if s["slot"] == slot:
-            s["primary_metric"] = primary_metric
-            s["delta_pct"] = ((primary_metric - bb) / bb * 100.0) if bb > 0 else None
-            s["status"] = status
+    target = next((s for s in rnd["slots"] if s["slot"] == slot), None)
+    if target is None:
+        raise KeyError(f"slot {slot!r} not in round {round_id!r}")
+    target["primary_metric"] = primary_metric
+    target["delta_pct"] = ((primary_metric - bb) / bb * 100.0) if bb > 0 else None
+    target["status"] = status
     if all(s["status"] in ("done", "crash") for s in rnd["slots"]):
         rnd["status"] = "scored"
     else:

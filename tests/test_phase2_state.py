@@ -116,6 +116,14 @@ def test_round_open_and_record_lifecycle(toy_run):
     assert state["rounds"][-1]["status"] == "scored"
 
 
+def test_record_slot_unknown_slot_raises(toy_run):
+    state = ps.init_state(toy_run, "toy-tag")
+    state = ps.open_round(toy_run, state, [{"slot": "a", "tier": "config",
+                                            "title": "t", "source_urls": []}])
+    with pytest.raises(KeyError):
+        ps.record_slot(toy_run, state, "r001", "zzz", 0.5, "done")
+
+
 def test_close_round(toy_run):
     state = ps.init_state(toy_run, "toy-tag")
     state = ps.open_round(toy_run, state, [{"slot": "a", "tier": "config",
