@@ -1,0 +1,22 @@
+# Web 部署配置模板。脚本、frontend、backend 都读这个文件（CONFIG_PATH 指向它）。
+# **这是骨架，按你的模型填空。** 下面两个 `<model-a>`/`<model-b>` 是占位名，替换成真实模型名。
+
+ports:
+  frontend: 7870           # 前端绑定端口。共享机上默认 7860 常被占，先 `ss -ltn` 探活再选空闲口
+  <model-a>: 8801          # 每个模型后端一个端口，绑 127.0.0.1（外部不可达）
+  <model-b>: 8802
+
+idle_ttl: 600              # 秒；模型空闲超过此值从显存卸载。**必须大于最坏单次推理耗时**，
+                           # 否则一次长推理可能被 idle 线程中途卸载。
+
+models:
+  # 每个模型一组“推理时实际接受的参数”默认值。键名要与 infer.py 入口签名对得上。
+  # merge_params 只保留 common/config.py 里 _INFER_KEYS[model] 列出的键。
+  <model-a>:
+    # 例：图像生成类参数
+    steps: 30
+    resolution: 640        # 注意：UI 控件取值域必须匹配模型真实接受范围（见 deployment-pattern.md 纪律）
+    # 部署变体可选项（按空闲显存挑精度/量化），由 Runner 读取：
+    bf16_min_free_mib: 40000   # 空闲显存 >= 此值用 bf16，否则降级（int8 等）
+  <model-b>:
+    max_iterations: 6
