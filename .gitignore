@@ -12,3 +12,7 @@ runs/
 
 # Project-local model / dataset caches (see SKILL.md "Cache 落项目目录")
 caches/
+
+# Per-deployment web app (local instance, like runs/; the reusable pattern
+# lives in skills/autoexplore-webdeploy/, not here)
+web/
