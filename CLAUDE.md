@@ -10,7 +10,7 @@ When implementing, the project will not yet be a git repository (`git init` is n
 
 ## What is being built
 
-The spec is in [需求文档-20260521.md](需求文档-20260521.md) (Chinese). `autoexplore` is an autonomous agent that takes a *research-direction description* as input and runs two phases:
+The spec is in [prd-20260521.md](prd-20260521.md) (Chinese). `autoexplore` is an autonomous agent that takes a *research-direction description* as input and runs two phases:
 
 **Phase 1 — Baseline model selection:**
 1. Clarify the research direction with the user.
