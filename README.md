@@ -17,7 +17,7 @@
 
 ## 简介
 
-**autoexplore** 是一套以 [Claude Code](https://claude.com/claude-code) **Skill** 形式交付的自主智能体。你只需给出一段**研究方向描述**，它就能自动完成「找模型 → Docker 里复现 → 在统一测试集上评测 → 选出最优 baseline → 不断迭代优化」的全流程，并可把成果一键部署成可交互的 Web 应用。
+**autoexplore** 是一套以**通用 Agent Skill** 形式交付的自主智能体。你只需给出一段**研究方向描述**，它就能自动完成「找模型 → Docker 里复现 → 在统一测试集上评测 → 选出最优 baseline → 不断迭代优化」的全流程，并可把成果一键部署成可交互的 Web 应用。
 
 它不是一个传统应用，而是一组**任务/模型无关的可复用技能**——同样的流程既能跑视觉问答，也能跑分割、生成或任意有公开权重的开源模型方向。
 
@@ -58,7 +58,7 @@ autoexplore 面向**云端多 GPU 服务器**：
 
 | 依赖 | 说明 |
 |------|------|
-| Claude Code | 智能体的运行宿主，技能由其加载与调度 |
+| 智能体运行环境 | 任意支持 Skill 机制的宿主（如 [Claude Code](https://claude.com/claude-code)） |
 | Python | ≥ 3.12 |
 | [uv](https://docs.astral.sh/uv/) | 依赖与脚本运行器（推荐） |
 | Docker | 模型复现/部署的隔离环境 |
@@ -69,25 +69,32 @@ autoexplore 面向**云端多 GPU 服务器**：
 
 ```bash
 # 1. 克隆仓库
-git clone <仓库地址> autoexplore
+git clone https://github.com/DataAIPlayer/autoexplore.git
 cd autoexplore
 
 # 2. 安装依赖(脚本运行环境)
 uv sync
 
-# 3. 在 Claude Code 中加载技能
-#    skills/ 下的三个技能即开即用,在 Claude Code 会话中按需调用。
+# 3. 在智能体运行环境中加载技能
+#    skills/ 下的三个技能即开即用,在支持 Skill 的会话中按需调用
+#    (以 Claude Code 为例:技能会被自动发现并按需加载)。
 ```
 
 ## 使用
 
-在 Claude Code 会话中，描述你的研究方向，按阶段调用对应技能：
+在智能体会话中（以 Claude Code 为例），把对应技能的 `SKILL.md` 路径提供给智能体即可触发；三个技能按研究阶段划分：
 
 | 技能 | 何时使用 |
 |------|---------|
 | **`autoexplore-phase1`** | 针对某个研究方向，复现并评测 ≤3 个开源模型，选出指标最高的 baseline。 |
 | **`autoexplore-phase2`** | 在 phase-1 产出的 baseline 上做不终止的迭代优化，每次相对提升 +5% 晋升新主干。 |
 | **`autoexplore-webdeploy`** | 把复现/优化得到的 `infer.py` 部署成可交互 Web 应用。 |
+
+示例（启动第一阶段）：
+
+```
+根据 skills/autoexplore-phase1/SKILL.md，开始图像目标检测方向的研究。
+```
 
 > 第一/二阶段各只有一个**人工关卡**（确认方向、测试集与指标）；确认后智能体即自主运行，不再逐步问人。每个 run 的工作目录落在 `runs/<tag>/`（默认不纳入版本管理）。
 
@@ -122,7 +129,7 @@ uv sync
 
 ```
 autoexplore/
-├── skills/                       # 三个 Claude Code 技能(核心交付物)
+├── skills/                       # 三个可复用技能(核心交付物)
 │   ├── autoexplore-phase1/       #   第一阶段:复现 baseline
 │   ├── autoexplore-phase2/       #   第二阶段:迭代优化
 │   └── autoexplore-webdeploy/    #   Web 部署
@@ -130,7 +137,7 @@ autoexplore/
 ├── tests/                        # pytest 测试(GPU 用例默认跳过)
 ├── docs/                         # 设计规格(specs)与实现计划(plans)
 ├── examples/                     # autoresearch 参考设计(自主实验循环的范式)
-├── 需求文档-20260521.md           # 原始需求文档
+├── prd-20260521.md               # 原始需求文档
 ├── CLAUDE.md                     # 给 Claude Code 的项目指引
 ├── GIT_CONVENTIONS.md            # Git 分支与提交规范
 ├── pyproject.toml
@@ -168,5 +175,5 @@ active —— 三个技能与确定性脚本骨架均已落地并有测试覆盖
 
 ## 致谢
 
-- 基于 [Claude Code](https://claude.com/claude-code) 的 Skill 机制构建。
-- 自主实验循环的范式参考了 [`examples/autoresearch_program.md`](examples/autoresearch_program.md)。
+- 可在 [Claude Code](https://claude.com/claude-code) 等支持 Skill 机制的智能体运行环境中加载运行。
+- 自主实验循环的范式参考了 [karpathy/autoresearch](https://github.com/karpathy/autoresearch) 代码库。

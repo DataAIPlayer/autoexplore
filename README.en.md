@@ -17,7 +17,7 @@
 
 ## Introduction
 
-**autoexplore** is an autonomous agent delivered as a set of [Claude Code](https://claude.com/claude-code) **Skills**. Give it a **research-direction description** and it runs the whole pipeline for you: *find candidate models → reproduce them in Docker → evaluate on a unified test set → pick the best baseline → keep optimizing* — and it can deploy the result as an interactive web app in one step.
+**autoexplore** is an autonomous agent delivered as a set of **general-purpose Agent Skills**. Give it a **research-direction description** and it runs the whole pipeline for you: *find candidate models → reproduce them in Docker → evaluate on a unified test set → pick the best baseline → keep optimizing* — and it can deploy the result as an interactive web app in one step.
 
 It is not a conventional application but a set of **task- and model-agnostic, reusable skills** — the same pipeline works for visual question answering, segmentation, generation, or any open-source model direction with public weights.
 
@@ -58,7 +58,7 @@ autoexplore targets a **multi-GPU cloud server**:
 
 | Requirement | Notes |
 |-------------|-------|
-| Claude Code | Host runtime; it loads and orchestrates the skills |
+| Agent runtime | Any host that supports the Skill mechanism (e.g. [Claude Code](https://claude.com/claude-code)); it loads and orchestrates the skills |
 | Python | ≥ 3.12 |
 | [uv](https://docs.astral.sh/uv/) | Dependency & script runner (recommended) |
 | Docker | Isolated environment for reproduction/deployment |
@@ -69,26 +69,33 @@ autoexplore targets a **multi-GPU cloud server**:
 
 ```bash
 # 1. Clone
-git clone <repo-url> autoexplore
+git clone https://github.com/DataAIPlayer/autoexplore.git
 cd autoexplore
 
 # 2. Install dependencies (script runtime)
 uv sync
 
-# 3. Load the skills in Claude Code
-#    The three skills under skills/ are ready to use — invoke them
-#    on demand within a Claude Code session.
+# 3. Load the skills in your agent runtime
+#    The three skills under skills/ work out of the box — invoke them
+#    in any Skill-capable session (in Claude Code, they are
+#    auto-discovered and loaded on demand).
 ```
 
 ## Usage
 
-In a Claude Code session, describe your research direction and invoke the skill for each phase:
+In an agent session (e.g. Claude Code), point the agent at the `SKILL.md` path of the skill you want — that alone triggers it. The three skills map to research phases:
 
 | Skill | When to use |
 |-------|-------------|
 | **`autoexplore-phase1`** | Reproduce and evaluate ≤3 open-source models for a research direction; pick the highest-scoring baseline. |
 | **`autoexplore-phase2`** | Run never-ending optimization on the phase-1 baseline; promote a new backbone on each relative +5% gain. |
 | **`autoexplore-webdeploy`** | Deploy a reproduced/optimized `infer.py` as an interactive web app. |
+
+Example (kick off phase 1):
+
+```
+Following skills/autoexplore-phase1/SKILL.md, start research on image object detection.
+```
 
 > Each phase has a single **human checkpoint** (confirm direction, test set, and metrics). After that the agent runs autonomously and won't pause to ask step by step. Each run's working directory lives under `runs/<tag>/` (untracked by default).
 
@@ -123,7 +130,7 @@ These constraints are why results are trustworthy and the pipeline is resumable:
 
 ```
 autoexplore/
-├── skills/                       # The three Claude Code skills (core deliverable)
+├── skills/                       # The three reusable skills (core deliverable)
 │   ├── autoexplore-phase1/       #   Phase 1: reproduce baseline
 │   ├── autoexplore-phase2/       #   Phase 2: iterative optimization
 │   └── autoexplore-webdeploy/    #   Web deployment
@@ -131,7 +138,7 @@ autoexplore/
 ├── tests/                        # pytest suite (GPU cases skipped by default)
 ├── docs/                         # Design specs and implementation plans
 ├── examples/                     # autoresearch reference design (autonomous-loop pattern)
-├── 需求文档-20260521.md           # Original requirements doc (Chinese)
+├── prd-20260521.md               # Original requirements doc (Chinese)
 ├── CLAUDE.md                     # Project guidance for Claude Code
 ├── GIT_CONVENTIONS.md            # Git branch & commit conventions
 ├── pyproject.toml
@@ -169,5 +176,5 @@ Released under the [Apache License 2.0](LICENSE).
 
 ## Acknowledgements
 
-- Built on the Skill mechanism of [Claude Code](https://claude.com/claude-code).
-- The autonomous-experiment-loop pattern draws on [`examples/autoresearch_program.md`](examples/autoresearch_program.md).
+- Runs on any agent runtime that supports the Skill mechanism, such as [Claude Code](https://claude.com/claude-code).
+- The autonomous-experiment-loop pattern draws on the [karpathy/autoresearch](https://github.com/karpathy/autoresearch) repository.
