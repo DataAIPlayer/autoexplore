@@ -213,3 +213,18 @@ def promote_base(run_dir: Path, state: dict, name: str, exp_dir: str,
     state["dry_streak"] = 0
     save_state(run_dir, state)
     return state
+
+
+def bump_dry_streak(run_dir: Path, state: dict) -> dict:
+    state["dry_streak"] += 1
+    save_state(run_dir, state)
+    return state
+
+
+def saturation_check(run_dir: Path, state: dict, force: bool = False) -> bool:
+    """dry_streak ≥ saturation_k(或 force)→ sub_phase=multi-card,返回 True;否则 False。"""
+    if force or state["dry_streak"] >= state["saturation_k"]:
+        state["sub_phase"] = "multi-card"
+        save_state(run_dir, state)
+        return True
+    return False

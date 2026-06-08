@@ -167,3 +167,30 @@ def test_promote_base_bumps_version_and_resets_dry_streak(run_with_phase2):
     assert state["base_framework"]["latency_ms"] == pytest.approx(48.0)
     assert state["dry_streak"] == 0                      # 晋升清零饱和计数
     assert len(state["base_history"]) == 2
+
+
+def test_bump_dry_streak(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    state = p3.bump_dry_streak(run_with_phase2, state)
+    state = p3.bump_dry_streak(run_with_phase2, state)
+    assert state["dry_streak"] == 2
+
+
+def test_saturation_advances_to_multi_card_at_k(run_with_phase2):
+    state = _ready_base(run_with_phase2)              # saturation_k 默认 3
+    for _ in range(2):
+        p3.bump_dry_streak(run_with_phase2, state)
+    advanced = p3.saturation_check(run_with_phase2, state)
+    assert advanced is False                          # 2 < 3,不进
+    assert state["sub_phase"] == "single-card-loop"
+    p3.bump_dry_streak(run_with_phase2, state)        # → 3
+    advanced = p3.saturation_check(run_with_phase2, state)
+    assert advanced is True
+    assert state["sub_phase"] == "multi-card"
+
+
+def test_saturation_manual_trigger(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    advanced = p3.saturation_check(run_with_phase2, state, force=True)
+    assert advanced is True                           # 人工提前触发
+    assert state["sub_phase"] == "multi-card"
