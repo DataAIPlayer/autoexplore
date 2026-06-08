@@ -50,7 +50,7 @@ def passes_gate(base_lat: float, cand_lat: float, baseline_q: float, cand_q: flo
 
 def best_by_latency(candidates: list[dict]) -> dict | None:
     """3a/3c 选型:质量达标(passes_quality=True)候选里 latency_ms 最小者;无则 None。"""
-    eligible = [c for c in candidates if c.get("passes_quality")]
+    eligible = [c for c in candidates if c.get("passes_quality") and c.get("latency_ms") is not None]
     if not eligible:
         return None
     return min(eligible, key=lambda c: c["latency_ms"])
@@ -176,7 +176,7 @@ def open_round(run_dir: Path, state: dict, directions: list[dict]) -> dict:
               "speedup_pct": None, "quality_loss_pct": None, "status": "pending"}
              for d in directions]
     state["rounds"].append({"id": rid, "status": "open", "slots": slots})
-    save_state(run_dir, state)
+    directions_add(run_dir, state, directions)  # 已含 save_state
     return state
 
 
@@ -192,12 +192,22 @@ def record_slot(run_dir: Path, state: dict, round_id: str, slot: str,
     baseline_q = state["baseline"]["quality"]
     target["latency_ms"] = latency_ms
     target["quality"] = quality
-    target["speedup_pct"] = speedup_ratio(base_lat, latency_ms) * 100.0
-    target["quality_loss_pct"] = quality_loss_ratio(baseline_q, quality) * 100.0
+    if status != "crash":
+        target["speedup_pct"] = speedup_ratio(base_lat, latency_ms) * 100.0
+        target["quality_loss_pct"] = quality_loss_ratio(baseline_q, quality) * 100.0
+    else:
+        target["speedup_pct"] = None
+        target["quality_loss_pct"] = None
     target["status"] = status
     rnd["status"] = ("scored"
                      if all(s["status"] in ("done", "crash") for s in rnd["slots"])
                      else "running")
+    save_state(run_dir, state)
+    return state
+
+
+def close_round(run_dir: Path, state: dict, round_id: str) -> dict:
+    _find_round(state, round_id)["status"] = "done"
     save_state(run_dir, state)
     return state
 
@@ -294,7 +304,7 @@ def next_action(state: dict | None) -> dict:
         return {"action": "init"}
     sp = state.get("sub_phase")
     if sp == "framework-select":
-        if state["baseline"].get("latency_ms") in (None, 0):
+        if state["baseline"].get("latency_ms") is None:
             return {"action": "baseline"}
         return {"action": "framework_select"}
     if sp == "single-card-loop":

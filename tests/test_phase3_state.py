@@ -258,6 +258,54 @@ def test_next_action_resume_across_subphases(run_with_phase2):
     assert p3.next_action(state)["action"] == "done"
 
 
+def test_record_slot_crash_has_none_metrics(run_with_phase2):
+    """m-4: crash slot 不应计算 speedup_pct/quality_loss_pct;且全 slot 终态后轮次 scored。"""
+    state = _ready_base(run_with_phase2)  # base 延迟 60ms,基线质量 0.40
+    state = p3.open_round(run_with_phase2, state,
+                          [{"slot": "a", "tier": "quantization"},
+                           {"slot": "b", "tier": "compile"}])
+    # slot "a" 正常完成
+    state = p3.record_slot(run_with_phase2, state, "r001", "a",
+                           latency_ms=48.0, quality=0.398, status="done")
+    assert state["rounds"][-1]["status"] == "running"   # 尚有 pending slot
+    # slot "b" crash
+    state = p3.record_slot(run_with_phase2, state, "r001", "b",
+                           latency_ms=0.0, quality=0.0, status="crash")
+    rnd = state["rounds"][-1]
+    assert rnd["status"] == "scored"                    # 全 slot 终态 → scored
+    crash_slot = next(s for s in rnd["slots"] if s["slot"] == "b")
+    assert crash_slot["speedup_pct"] is None
+    assert crash_slot["quality_loss_pct"] is None
+    # 正常完成的 slot "a" 仍有正常指标
+    done_slot = next(s for s in rnd["slots"] if s["slot"] == "a")
+    assert done_slot["speedup_pct"] == pytest.approx(20.0)
+
+
+def test_running_state_next_action_returns_execute(run_with_phase2):
+    """m-3: 2-slot 轮次记录一个 slot done 后,round status==running 且 next_action==execute。"""
+    state = _ready_base(run_with_phase2)
+    state = p3.open_round(run_with_phase2, state,
+                          [{"slot": "a", "tier": "quantization"},
+                           {"slot": "b", "tier": "compile"}])
+    state = p3.record_slot(run_with_phase2, state, "r001", "a",
+                           latency_ms=48.0, quality=0.398, status="done")
+    assert state["rounds"][-1]["status"] == "running"
+    assert p3.next_action(state)["action"] == "execute"
+
+
+def test_close_round_then_next_action_returns_search(run_with_phase2):
+    """close_round resume: scored 轮次 close_round 后 next_action 应返回 search。"""
+    state = _ready_base(run_with_phase2)
+    state = p3.open_round(run_with_phase2, state,
+                          [{"slot": "a", "tier": "quantization"}])
+    state = p3.record_slot(run_with_phase2, state, "r001", "a",
+                           latency_ms=48.0, quality=0.398, status="done")
+    assert state["rounds"][-1]["status"] == "scored"
+    state = p3.close_round(run_with_phase2, state, "r001")
+    assert state["rounds"][-1]["status"] == "done"
+    assert p3.next_action(state)["action"] == "search"
+
+
 import subprocess
 import sys
 
