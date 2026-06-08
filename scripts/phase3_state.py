@@ -108,3 +108,53 @@ def set_baseline(run_dir: Path, state: dict, latency_ms: float,
         state["baseline"]["quality"] = quality
     save_state(run_dir, state)
     return state
+
+
+def _find_framework(state: dict, name: str) -> dict:
+    for f in state["frameworks"]:
+        if f["name"] == name:
+            return f
+    raise KeyError(name)
+
+
+def framework_add(run_dir: Path, state: dict, name: str) -> dict:
+    state["frameworks"].append({"name": name, "exp_dir": f"frameworks/{name}",
+                                "status": "pending", "latency_ms": None,
+                                "quality": None, "passes_quality": False})
+    save_state(run_dir, state)
+    return state
+
+
+def framework_record(run_dir: Path, state: dict, name: str, latency_ms: float,
+                     quality: float, status: str) -> dict:
+    fw = _find_framework(state, name)
+    fw["latency_ms"] = latency_ms
+    fw["quality"] = quality
+    fw["status"] = status                          # ready|crash
+    fw["passes_quality"] = passes_quality(state["baseline"]["quality"], quality)
+    save_state(run_dir, state)
+    return state
+
+
+def select_base(run_dir: Path, state: dict) -> dict:
+    """3a:质量达标框架里最小延迟者 = base v0;无则退回主干原生推理。推进 sub_phase。"""
+    ready = [f for f in state["frameworks"] if f["status"] == "ready"]
+    winner = best_by_latency(ready)
+    if winner is None:
+        base = {"name": "native", "exp_dir": "baseline",
+                "latency_ms": state["baseline"]["latency_ms"],
+                "quality": state["baseline"]["quality"], "version_n": 0}
+    else:
+        base = {"name": winner["name"], "exp_dir": winner["exp_dir"],
+                "latency_ms": winner["latency_ms"], "quality": winner["quality"],
+                "version_n": 0}
+    state["base_framework"] = base
+    state["base_history"] = [{"version_n": 0, "name": base["name"],
+                              "latency_ms": base["latency_ms"], "promoted_at": _now()}]
+    state["sub_phase"] = "single-card-loop"
+    save_state(run_dir, state)
+    return state
+
+
+def base_get(state: dict) -> dict | None:
+    return state.get("base_framework")

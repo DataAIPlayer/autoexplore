@@ -86,3 +86,39 @@ def test_save_state_atomic_roundtrip(run_with_phase2):
     state["frameworks"].append({"name": "vllm"})
     p3.save_state(run_with_phase2, state)
     assert p3.load_state(run_with_phase2)["frameworks"][0]["name"] == "vllm"
+
+
+def test_framework_record_sets_passes_quality(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    p3.set_baseline(run_with_phase2, state, 100.0, 10.0)        # 基线质量 0.40
+    p3.framework_add(run_with_phase2, state, "vllm")
+    state = p3.framework_record(run_with_phase2, state, "vllm",
+                                latency_ms=60.0, quality=0.398, status="ready")
+    fw = state["frameworks"][0]
+    assert fw["passes_quality"] is True            # 0.5% 损失,达标
+    assert fw["latency_ms"] == pytest.approx(60.0)
+    assert fw["status"] == "ready"
+
+
+def test_select_base_picks_fastest_quality_passing(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    p3.set_baseline(run_with_phase2, state, 100.0, 10.0)
+    for name, lat, q in [("vllm", 55.0, 0.30), ("sglang", 70.0, 0.398),
+                         ("trtllm", 50.0, 0.399)]:
+        p3.framework_add(run_with_phase2, state, name)
+        p3.framework_record(run_with_phase2, state, name, lat, q, "ready")
+    state = p3.select_base(run_with_phase2, state)
+    assert state["base_framework"]["name"] == "trtllm"   # 50ms 且质量达标
+    assert state["base_framework"]["version_n"] == 0
+    assert state["sub_phase"] == "single-card-loop"
+
+
+def test_select_base_falls_back_to_native_when_none_pass(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    p3.set_baseline(run_with_phase2, state, 100.0, 10.0)
+    p3.framework_add(run_with_phase2, state, "vllm")
+    p3.framework_record(run_with_phase2, state, "vllm", 50.0, 0.30, "ready")  # 快但质量崩
+    state = p3.select_base(run_with_phase2, state)
+    assert state["base_framework"]["name"] == "native"
+    assert state["base_framework"]["latency_ms"] == pytest.approx(100.0)  # 退回主干原生延迟
+    assert state["sub_phase"] == "single-card-loop"
