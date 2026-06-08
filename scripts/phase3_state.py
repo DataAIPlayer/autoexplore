@@ -158,3 +158,58 @@ def select_base(run_dir: Path, state: dict) -> dict:
 
 def base_get(state: dict) -> dict | None:
     return state.get("base_framework")
+
+
+def _find_round(state: dict, round_id: str) -> dict:
+    for r in state["rounds"]:
+        if r["id"] == round_id:
+            return r
+    raise KeyError(round_id)
+
+
+def open_round(run_dir: Path, state: dict, directions: list[dict]) -> dict:
+    state["round_counter"] += 1
+    rid = f"r{state['round_counter']:03d}"
+    slots = [{"slot": d["slot"],
+              "exp_dir": f"single_card/rounds/{rid}/exp_{d['slot']}",
+              "tier": d.get("tier", ""), "latency_ms": None, "quality": None,
+              "speedup_pct": None, "quality_loss_pct": None, "status": "pending"}
+             for d in directions]
+    state["rounds"].append({"id": rid, "status": "open", "slots": slots})
+    save_state(run_dir, state)
+    return state
+
+
+def record_slot(run_dir: Path, state: dict, round_id: str, slot: str,
+                latency_ms: float, quality: float, status: str) -> dict:
+    """status ∈ {done, crash}。done 的 slot 算 speedup% vs 当前 base、loss% vs 基线。
+    全 slot 终态则轮转 scored。slot 不存在抛 KeyError(fail loud)。"""
+    rnd = _find_round(state, round_id)
+    target = next((s for s in rnd["slots"] if s["slot"] == slot), None)
+    if target is None:
+        raise KeyError(f"slot {slot!r} not in round {round_id!r}")
+    base_lat = state["base_framework"]["latency_ms"]
+    baseline_q = state["baseline"]["quality"]
+    target["latency_ms"] = latency_ms
+    target["quality"] = quality
+    target["speedup_pct"] = speedup_ratio(base_lat, latency_ms) * 100.0
+    target["quality_loss_pct"] = quality_loss_ratio(baseline_q, quality) * 100.0
+    target["status"] = status
+    rnd["status"] = ("scored"
+                     if all(s["status"] in ("done", "crash") for s in rnd["slots"])
+                     else "running")
+    save_state(run_dir, state)
+    return state
+
+
+def promote_base(run_dir: Path, state: dict, name: str, exp_dir: str,
+                 latency_ms: float, quality: float) -> dict:
+    v = state["base_framework"]["version_n"] + 1
+    state["base_framework"] = {"name": name, "exp_dir": exp_dir,
+                               "latency_ms": latency_ms, "quality": quality,
+                               "version_n": v}
+    state["base_history"].append({"version_n": v, "name": name,
+                                  "latency_ms": latency_ms, "promoted_at": _now()})
+    state["dry_streak"] = 0
+    save_state(run_dir, state)
+    return state

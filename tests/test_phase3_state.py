@@ -122,3 +122,48 @@ def test_select_base_falls_back_to_native_when_none_pass(run_with_phase2):
     assert state["base_framework"]["name"] == "native"
     assert state["base_framework"]["latency_ms"] == pytest.approx(100.0)  # 退回主干原生延迟
     assert state["sub_phase"] == "single-card-loop"
+
+
+def _ready_base(run_dir):
+    """helper:init + baseline + 选出 base(60ms/质量0.398)。"""
+    state = p3.init_state(run_dir, "toy-tag")
+    p3.set_baseline(run_dir, state, 100.0, 10.0)
+    p3.framework_add(run_dir, state, "vllm")
+    p3.framework_record(run_dir, state, "vllm", 60.0, 0.398, "ready")
+    return p3.select_base(run_dir, state)
+
+
+def test_open_round_creates_slots(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    dirs = [{"slot": "a", "tier": "quantization"},
+            {"slot": "b", "tier": "compile"},
+            {"slot": "c", "tier": "decoding"}]
+    state = p3.open_round(run_with_phase2, state, dirs)
+    rnd = state["rounds"][-1]
+    assert rnd["id"] == "r001"
+    assert [s["slot"] for s in rnd["slots"]] == ["a", "b", "c"]
+    assert rnd["slots"][0]["exp_dir"] == "single_card/rounds/r001/exp_a"
+
+
+def test_record_slot_computes_speedup_and_loss(run_with_phase2):
+    state = _ready_base(run_with_phase2)                 # base 延迟 60ms,基线质量 0.40
+    state = p3.open_round(run_with_phase2, state,
+                          [{"slot": "a", "tier": "quantization"}])
+    state = p3.record_slot(run_with_phase2, state, "r001", "a",
+                           latency_ms=48.0, quality=0.398, status="done")
+    slot = state["rounds"][-1]["slots"][0]
+    assert slot["speedup_pct"] == pytest.approx(20.0)   # (60-48)/60
+    assert slot["quality_loss_pct"] == pytest.approx(0.5, abs=1e-6)  # (0.40-0.398)/0.40
+    assert state["rounds"][-1]["status"] == "scored"    # 全 slot 终态
+
+
+def test_promote_base_bumps_version_and_resets_dry_streak(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    state["dry_streak"] = 2
+    state = p3.promote_base(run_with_phase2, state, "fp8-quant",
+                            "single_card/rounds/r001/exp_a", 48.0, 0.398)
+    assert state["base_framework"]["version_n"] == 1
+    assert state["base_framework"]["name"] == "fp8-quant"
+    assert state["base_framework"]["latency_ms"] == pytest.approx(48.0)
+    assert state["dry_streak"] == 0                      # 晋升清零饱和计数
+    assert len(state["base_history"]) == 2
