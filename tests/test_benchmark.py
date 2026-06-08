@@ -46,3 +46,36 @@ def test_select_records_default_first_n_sorted(bench_run):
     _, ds, _ = bench_run
     recs = bm.select_records({"n_records": 3}, ds)
     assert [r["image_id"] for r in recs] == ["s0", "s1", "s2"]
+
+
+def test_measure_produces_speed_and_predictions(bench_run):
+    _, ds, adapter = bench_run
+    mod = bm.load_adapter(adapter)
+    cfg = {"model_config": {"delay": 0.002}, "warmup": 2, "iters": 3,
+           "n_records": 5, "framework": "toy", "gpu_name": "cpu", "gpu_count": 1}
+    speed, preds = bm.measure(mod, ds, cfg)
+    # 延迟统计字段齐全且合理(每条 sleep 2ms → 均值 ≥ ~2ms)
+    for k in ("latency_mean_ms", "p50_ms", "p99_ms", "throughput_qps",
+              "n_records", "warmup", "iters", "framework", "gpu_name", "gpu_count"):
+        assert k in speed
+    assert speed["latency_mean_ms"] >= 1.5          # 宽松下界,避免抖动 flaky
+    assert speed["n_records"] == 5
+    assert speed["throughput_qps"] > 0
+    # predictions 来自首个计时轮,长度 == 子集大小,含 phase1 schema 字段
+    assert len(preds) == 5
+    assert preds[0]["image_id"] == "s0"
+    assert "score" in preds[0]
+
+
+def test_run_writes_both_files(bench_run):
+    base, ds, adapter = bench_run
+    cfg_path = base / "bench_config.json"
+    cfg_path.write_text(json.dumps({"model_config": {"delay": 0.001},
+                                    "warmup": 1, "iters": 2, "n_records": 3}))
+    speed = bm.run(adapter, cfg_path, ds,
+                   base / "speed.json", base / "predictions.jsonl")
+    assert (base / "speed.json").exists()
+    pred_lines = (base / "predictions.jsonl").read_text().splitlines()
+    assert len(pred_lines) == 3
+    assert json.loads(pred_lines[0])["image_id"] == "s0"
+    assert json.loads((base / "speed.json").read_text())["n_records"] == 3
