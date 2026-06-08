@@ -194,3 +194,29 @@ def test_saturation_manual_trigger(run_with_phase2):
     advanced = p3.saturation_check(run_with_phase2, state, force=True)
     assert advanced is True                           # 人工提前触发
     assert state["sub_phase"] == "multi-card"
+
+
+def test_parallel_record_and_select_final(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    p3.saturation_check(run_with_phase2, state, force=True)     # 进 multi-card
+    for name, lat, q, gpus in [("tp2", 35.0, 0.399, 2),
+                               ("pp2", 45.0, 0.40, 2),
+                               ("tp4", 30.0, 0.30, 4)]:          # tp4 最快但质量崩
+        p3.parallel_add(run_with_phase2, state, name, gpu_count=gpus)
+        p3.parallel_record(run_with_phase2, state, name, lat, q, "ready")
+    state = p3.select_final(run_with_phase2, state)
+    assert state["final"]["scheme"] == "tp2"                    # 35ms 且质量达标
+    assert state["final"]["gpu_count"] == 2
+    assert state["sub_phase"] == "done"
+
+
+def test_select_final_none_keeps_single_card(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    p3.saturation_check(run_with_phase2, state, force=True)
+    p3.parallel_add(run_with_phase2, state, "tp4", gpu_count=4)
+    p3.parallel_record(run_with_phase2, state, "tp4", 30.0, 0.20, "ready")  # 质量崩
+    state = p3.select_final(run_with_phase2, state)
+    # 无并行方案达标 → final 回落单卡 base,标 gpu_count=1
+    assert state["final"]["scheme"] == state["base_framework"]["name"]
+    assert state["final"]["gpu_count"] == 1
+    assert state["sub_phase"] == "done"

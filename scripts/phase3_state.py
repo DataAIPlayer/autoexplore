@@ -228,3 +228,48 @@ def saturation_check(run_dir: Path, state: dict, force: bool = False) -> bool:
         save_state(run_dir, state)
         return True
     return False
+
+
+def _find_parallel(state: dict, name: str) -> dict:
+    for s in state["parallel_schemes"]:
+        if s["name"] == name:
+            return s
+    raise KeyError(name)
+
+
+def parallel_add(run_dir: Path, state: dict, name: str, gpu_count: int) -> dict:
+    state["parallel_schemes"].append({"name": name, "exp_dir": f"multi_card/scheme_{name}",
+                                      "gpu_count": gpu_count, "status": "pending",
+                                      "latency_ms": None, "quality": None,
+                                      "passes_quality": False})
+    save_state(run_dir, state)
+    return state
+
+
+def parallel_record(run_dir: Path, state: dict, name: str, latency_ms: float,
+                    quality: float, status: str) -> dict:
+    sch = _find_parallel(state, name)
+    sch["latency_ms"] = latency_ms
+    sch["quality"] = quality
+    sch["status"] = status
+    sch["passes_quality"] = passes_quality(state["baseline"]["quality"], quality)
+    save_state(run_dir, state)
+    return state
+
+
+def select_final(run_dir: Path, state: dict) -> dict:
+    """3c:质量达标并行方案里最小延迟者 = final;无则回落单卡 base(gpu_count=1)。sub_phase=done。"""
+    ready = [s for s in state["parallel_schemes"] if s["status"] == "ready"]
+    winner = best_by_latency(ready)
+    if winner is None:
+        base = state["base_framework"]
+        state["final"] = {"scheme": base["name"], "exp_dir": base["exp_dir"],
+                          "latency_ms": base["latency_ms"], "quality": base["quality"],
+                          "gpu_count": 1}
+    else:
+        state["final"] = {"scheme": winner["name"], "exp_dir": winner["exp_dir"],
+                          "latency_ms": winner["latency_ms"], "quality": winner["quality"],
+                          "gpu_count": winner["gpu_count"]}
+    state["sub_phase"] = "done"
+    save_state(run_dir, state)
+    return state
