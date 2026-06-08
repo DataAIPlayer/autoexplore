@@ -1,5 +1,7 @@
 # tests/test_benchmark.py
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -79,10 +81,6 @@ def test_run_writes_both_files(bench_run):
     assert len(pred_lines) == 3
     assert json.loads(pred_lines[0])["image_id"] == "s0"
     assert json.loads((base / "speed.json").read_text())["n_records"] == 3
-
-
-import subprocess
-import sys
 
 
 def test_cli_run(bench_run):
