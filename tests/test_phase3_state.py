@@ -256,3 +256,35 @@ def test_next_action_resume_across_subphases(run_with_phase2):
     assert p3.next_action(state)["action"] == "parallel"
     p3.select_final(run_with_phase2, state)
     assert p3.next_action(state)["action"] == "done"
+
+
+import subprocess
+import sys
+
+
+def test_append_result_writes_header_then_row(run_with_phase2):
+    p3.append_phase3_result(run_with_phase2, stage="round", name="fp8-quant",
+                            base_ver=1, latency_ms=48.0, speedup_pct=20.0,
+                            quality=0.398, quality_loss_pct=0.5, status="accepted",
+                            description="FP8 weight-only")
+    lines = (run_with_phase2 / "phase3" / "results.tsv").read_text().splitlines()
+    assert lines[0].split("\t")[0] == "stage"
+    assert lines[1].split("\t")[1] == "fp8-quant"
+
+
+def test_cli_gate_dual(run_with_phase2):
+    out = subprocess.run(
+        [sys.executable, "-m", "scripts.phase3_state", "gate",
+         "--base-lat", "100", "--cand-lat", "90",
+         "--baseline-q", "0.40", "--cand-q", "0.398"],
+        capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert json.loads(out.stdout)["accept"] is True
+
+
+def test_cli_resume(run_with_phase2):
+    p3.init_state(run_with_phase2, "toy-tag")
+    out = subprocess.run(
+        [sys.executable, "-m", "scripts.phase3_state", "resume",
+         "--run-dir", str(run_with_phase2)],
+        capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert json.loads(out.stdout)["action"] == "baseline"

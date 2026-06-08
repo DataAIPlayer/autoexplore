@@ -310,3 +310,78 @@ def next_action(state: dict | None) -> dict:
     if sp == "done":
         return {"action": "done"}
     return {"action": "init"}
+
+
+PHASE3_RESULTS_HEADER = ["stage", "name", "base_ver", "latency_ms", "speedup_pct",
+                         "quality", "quality_loss_pct", "status", "description"]
+
+
+def append_phase3_result(run_dir: Path, stage: str, name: str, base_ver: int,
+                         latency_ms: float, speedup_pct: float | None, quality: float,
+                         quality_loss_pct: float | None, status: str,
+                         description: str) -> None:
+    """追加一行 phase3/results.tsv(append-only 研究日志,untracked)。
+    stage ∈ {framework, round, parallel};status ∈ {accepted, discard, crash, ready}。"""
+    path = run_dir / "phase3" / "results.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists()
+    with path.open("a", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        if is_new:
+            w.writerow(PHASE3_RESULTS_HEADER)
+        sp = "" if speedup_pct is None else f"{speedup_pct:.2f}"
+        ql = "" if quality_loss_pct is None else f"{quality_loss_pct:.2f}"
+        w.writerow([stage, name, str(base_ver), f"{latency_ms:.3f}", sp,
+                    f"{quality:.6f}", ql, status, description])
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Phase-3 状态机 CLI")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    si = sub.add_parser("init", help="从 phase2 backbone 初始化")
+    si.add_argument("--run-dir", type=Path, required=True)
+    si.add_argument("--tag", required=True)
+
+    sr = sub.add_parser("resume", help="打印下一步动作 JSON")
+    sr.add_argument("--run-dir", type=Path, required=True)
+
+    sg = sub.add_parser("gate", help="双门判定,打印 {accept: bool}")
+    sg.add_argument("--base-lat", type=float, required=True)
+    sg.add_argument("--cand-lat", type=float, required=True)
+    sg.add_argument("--baseline-q", type=float, required=True)
+    sg.add_argument("--cand-q", type=float, required=True)
+
+    sd = sub.add_parser("dispatch", help="按空闲卡派发,打印分配 JSON")
+    sd.add_argument("--experiments", required=True, help="JSON 数组字符串")
+    sd.add_argument("--free-gpus", required=True, help="逗号分隔 GPU id,如 0,1,2")
+
+    sb = sub.add_parser("base-get", help="打印当前 base JSON")
+    sb.add_argument("--run-dir", type=Path, required=True)
+
+    args = ap.parse_args(argv)
+
+    if args.cmd == "init":
+        state = init_state(args.run_dir, args.tag)
+        print(json.dumps(state["baseline"], ensure_ascii=False))
+        return 0
+    if args.cmd == "resume":
+        print(json.dumps(next_action(load_state(args.run_dir)), ensure_ascii=False))
+        return 0
+    if args.cmd == "gate":
+        ok = passes_gate(args.base_lat, args.cand_lat, args.baseline_q, args.cand_q)
+        print(json.dumps({"accept": ok}))
+        return 0
+    if args.cmd == "dispatch":
+        exps = json.loads(args.experiments)
+        gpus = [int(x) for x in args.free_gpus.split(",") if x != ""]
+        print(json.dumps(plan_dispatch(exps, gpus), ensure_ascii=False))
+        return 0
+    if args.cmd == "base-get":
+        print(json.dumps(base_get(load_state(args.run_dir) or {}) or {}, ensure_ascii=False))
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
