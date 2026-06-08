@@ -220,3 +220,39 @@ def test_select_final_none_keeps_single_card(run_with_phase2):
     assert state["final"]["scheme"] == state["base_framework"]["name"]
     assert state["final"]["gpu_count"] == 1
     assert state["sub_phase"] == "done"
+
+
+def test_directions_dedup(run_with_phase2):
+    state = _ready_base(run_with_phase2)
+    d = {"title": "FP8 quant", "source_urls": ["http://a", "http://b"]}
+    assert p3.directions_seen(state, d) is False
+    p3.directions_add(run_with_phase2, state, [d])
+    # url 顺序无关、大小写归一仍判已见
+    d2 = {"title": "fp8 quant", "source_urls": ["http://b", "http://a"]}
+    assert p3.directions_seen(state, d2) is True
+
+
+def test_plan_dispatch_reused(run_with_phase2):
+    exps = [{"slot": "a", "needs_gpus": 1, "is_training": False},
+            {"slot": "b", "needs_gpus": 2, "is_training": True}]
+    out = p3.plan_dispatch(exps, [0, 1])
+    assert out["assigned"]["a"] == [0]          # 非训练优先
+    assert out["queued"] == ["b"]               # 训练型卡不够排队
+
+
+def test_next_action_resume_across_subphases(run_with_phase2):
+    assert p3.next_action(None)["action"] == "init"
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    assert p3.next_action(state)["action"] == "baseline"      # 尚未测基线
+    p3.set_baseline(run_with_phase2, state, 100.0, 10.0)
+    assert p3.next_action(state)["action"] == "framework_select"
+    state = _ready_base(run_with_phase2)                       # 已选 base,进单卡环
+    assert p3.next_action(state)["action"] == "search"
+    p3.open_round(run_with_phase2, state, [{"slot": "a", "tier": "compile"}])
+    assert p3.next_action(state)["action"] == "execute"
+    p3.record_slot(run_with_phase2, state, "r001", "a", 48.0, 0.398, "done")
+    assert p3.next_action(state)["action"] == "gate_check"
+    p3.saturation_check(run_with_phase2, state, force=True)
+    assert p3.next_action(state)["action"] == "parallel"
+    p3.select_final(run_with_phase2, state)
+    assert p3.next_action(state)["action"] == "done"

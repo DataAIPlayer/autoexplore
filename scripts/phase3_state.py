@@ -273,3 +273,40 @@ def select_final(run_dir: Path, state: dict) -> dict:
     state["sub_phase"] = "done"
     save_state(run_dir, state)
     return state
+
+
+def directions_seen(state: dict, direction: dict) -> bool:
+    return _direction_fingerprint(direction) in state.get("directions_tried", [])
+
+
+def directions_add(run_dir: Path, state: dict, directions: list[dict]) -> dict:
+    for d in directions:
+        fp = _direction_fingerprint(d)
+        if fp not in state["directions_tried"]:
+            state["directions_tried"].append(fp)
+    save_state(run_dir, state)
+    return state
+
+
+def next_action(state: dict | None) -> dict:
+    """中断恢复:读 state 给下一步动作(按 sub_phase)。"""
+    if not state:
+        return {"action": "init"}
+    sp = state.get("sub_phase")
+    if sp == "framework-select":
+        if state["baseline"].get("latency_ms") in (None, 0):
+            return {"action": "baseline"}
+        return {"action": "framework_select"}
+    if sp == "single-card-loop":
+        rounds = state.get("rounds", [])
+        if not rounds or rounds[-1]["status"] == "done":
+            return {"action": "search"}
+        last = rounds[-1]
+        if last["status"] == "scored":
+            return {"action": "gate_check", "round": last["id"]}
+        return {"action": "execute", "round": last["id"]}
+    if sp == "multi-card":
+        return {"action": "parallel"}
+    if sp == "done":
+        return {"action": "done"}
+    return {"action": "init"}
