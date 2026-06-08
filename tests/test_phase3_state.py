@@ -46,3 +46,43 @@ def test_best_by_latency_picks_min_among_quality_passing():
 def test_best_by_latency_none_when_no_quality_passing():
     cands = [{"name": "f1", "latency_ms": 50.0, "passes_quality": False}]
     assert p3.best_by_latency(cands) is None
+
+
+@pytest.fixture
+def run_with_phase2(tmp_path):
+    """造一个 run_dir,含 phase2/state.json(backbone=p2:winner, primary_metric=0.40)。"""
+    run = tmp_path / "runs" / "toy-tag"
+    (run / "phase2").mkdir(parents=True)
+    (run / "phase2" / "state.json").write_text(json.dumps({
+        "tag": "toy-tag",
+        "backbone": {"id": "p2:winner", "source_dir": "phase2/rounds/r003/exp_a",
+                     "primary_metric": 0.40, "metrics": {"score_mean": 0.40}, "version_n": 3},
+    }))
+    return run
+
+
+def test_init_reads_phase2_backbone(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    assert state["sub_phase"] == "framework-select"
+    assert state["baseline"]["source"] == "phase2-backbone:p2:winner"
+    assert state["baseline"]["quality"] == pytest.approx(0.40)
+    assert state["baseline"]["latency_ms"] is None      # 尚未测速
+    assert state["dry_streak"] == 0
+    assert state["saturation_k"] == p3.SATURATION_K_DEFAULT
+    # 落盘可重载
+    assert p3.load_state(run_with_phase2)["sub_phase"] == "framework-select"
+
+
+def test_set_baseline_fills_latency(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    state = p3.set_baseline(run_with_phase2, state, latency_ms=100.0, throughput_qps=10.0)
+    assert state["baseline"]["latency_ms"] == pytest.approx(100.0)
+    assert state["baseline"]["throughput_qps"] == pytest.approx(10.0)
+    assert state["baseline"]["quality"] == pytest.approx(0.40)   # 沿用 phase2 分
+
+
+def test_save_state_atomic_roundtrip(run_with_phase2):
+    state = p3.init_state(run_with_phase2, "toy-tag")
+    state["frameworks"].append({"name": "vllm"})
+    p3.save_state(run_with_phase2, state)
+    assert p3.load_state(run_with_phase2)["frameworks"][0]["name"] == "vllm"

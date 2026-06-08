@@ -54,3 +54,57 @@ def best_by_latency(candidates: list[dict]) -> dict | None:
     if not eligible:
         return None
     return min(eligible, key=lambda c: c["latency_ms"])
+
+
+def load_state(run_dir: Path) -> dict | None:
+    p = run_dir / "phase3" / "state.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def save_state(run_dir: Path, state: dict) -> None:
+    p = run_dir / "phase3" / "state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    state["updated_at"] = _now()
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    tmp.replace(p)  # 原子替换
+
+
+def backbone_from_phase2(run_dir: Path) -> tuple[str, float]:
+    """读 phase2/state.json 的 backbone,返回 (id, primary_metric)。无则抛 FileNotFoundError/KeyError。"""
+    st = json.loads((run_dir / "phase2" / "state.json").read_text())
+    bb = st["backbone"]
+    return bb["id"], float(bb["primary_metric"])
+
+
+def init_state(run_dir: Path, tag: str) -> dict:
+    bb_id, bb_metric = backbone_from_phase2(run_dir)
+    state = {
+        "tag": tag,
+        "baseline": {"source": f"phase2-backbone:{bb_id}", "quality": bb_metric,
+                     "latency_ms": None, "throughput_qps": None},
+        "sub_phase": "framework-select",
+        "frameworks": [],
+        "base_framework": None,
+        "base_history": [],
+        "round_counter": 0,
+        "rounds": [],
+        "dry_streak": 0,
+        "saturation_k": SATURATION_K_DEFAULT,
+        "directions_tried": [],
+        "parallel_schemes": [],
+        "final": None,
+        "updated_at": _now(),
+    }
+    save_state(run_dir, state)
+    return state
+
+
+def set_baseline(run_dir: Path, state: dict, latency_ms: float,
+                 throughput_qps: float, quality: float | None = None) -> dict:
+    state["baseline"]["latency_ms"] = latency_ms
+    state["baseline"]["throughput_qps"] = throughput_qps
+    if quality is not None:                       # 可选:用实测质量纠正 phase2 占位
+        state["baseline"]["quality"] = quality
+    save_state(run_dir, state)
+    return state
