@@ -105,3 +105,21 @@ def run(adapter_path, bench_config_path, dataset_dir, out, predictions_out) -> d
         for p in preds:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
     return speed
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="冻结测速协议:产 speed.json + predictions.jsonl")
+    ap.add_argument("--adapter", type=Path, required=True)
+    ap.add_argument("--bench-config", type=Path, required=True)
+    ap.add_argument("--dataset", type=Path, required=True)
+    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--predictions", type=Path, required=True)
+    args = ap.parse_args(argv)
+    speed = run(args.adapter, args.bench_config, args.dataset, args.out, args.predictions)
+    print(json.dumps({"latency_mean_ms": speed["latency_mean_ms"],
+                      "p50_ms": speed["p50_ms"], "p99_ms": speed["p99_ms"]}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -79,3 +79,23 @@ def test_run_writes_both_files(bench_run):
     assert len(pred_lines) == 3
     assert json.loads(pred_lines[0])["image_id"] == "s0"
     assert json.loads((base / "speed.json").read_text())["n_records"] == 3
+
+
+import subprocess
+import sys
+
+
+def test_cli_run(bench_run):
+    base, ds, adapter = bench_run
+    cfg_path = base / "bench_config.json"
+    cfg_path.write_text(json.dumps({"model_config": {"delay": 0.001},
+                                    "warmup": 1, "iters": 1, "n_records": 2}))
+    out = subprocess.run(
+        [sys.executable, "-m", "scripts.benchmark",
+         "--adapter", str(adapter), "--bench-config", str(cfg_path),
+         "--dataset", str(ds), "--out", str(base / "speed.json"),
+         "--predictions", str(base / "predictions.jsonl")],
+        capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert out.returncode == 0
+    assert (base / "speed.json").exists()
+    assert len((base / "predictions.jsonl").read_text().splitlines()) == 2
