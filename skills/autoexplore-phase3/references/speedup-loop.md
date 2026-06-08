@@ -43,7 +43,8 @@ uv run python -m scripts.phase3_state resume --run-dir runs/<tag>
 ## 模式 3b:单卡加速方案优化循环(LOOP,饱和自动进 3c)
 ### a. 搜方向
 WebSearch/WebFetch 在 github/Arxiv/HF/paperswithcode 搜**跨领域可复用**加速方向,选 3,
-写 `single_card/rounds/rNNN/directions.json`(tier ∈ phase3 集 + `expected_speedup`/`quality_risk`),
+写 `single_card/rounds/rNNN/directions.json`(必填字段同 phase2,`tier` ∈ phase3 集;
+可加 `expected_speedup`/`quality_risk` 作排序参考——这两个是参考性字段,schema 不强制校验),
 校验并去重:
 ```bash
 uv run scripts/directions_schema.py --file <directions.json> --tiers phase3
