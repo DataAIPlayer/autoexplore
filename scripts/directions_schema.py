@@ -8,10 +8,14 @@ from pathlib import Path
 
 REQUIRED = {"slot": str, "title": str, "source_urls": list, "idea": str,
             "tier": str, "needs_training": bool}
-TIERS = {"config", "post-process", "pipeline", "train", "infer-tune"}
+PHASE2_TIERS = {"config", "post-process", "pipeline", "train", "infer-tune"}
+PHASE3_TIERS = {"framework", "quantization", "kernel", "decoding", "compile", "parallel"}
+TIERS = PHASE2_TIERS                       # 默认与历史行为一致
+TIER_SETS = {"phase2": PHASE2_TIERS, "phase3": PHASE3_TIERS,
+             "all": PHASE2_TIERS | PHASE3_TIERS}
 
 
-def validate(directions) -> list[str]:
+def validate(directions, tiers=TIERS) -> list[str]:
     if not isinstance(directions, list) or not directions:
         return ["directions must be a non-empty list"]
     errs: list[str] = []
@@ -25,8 +29,8 @@ def validate(directions) -> list[str]:
                 errs.append(f"[{i}] missing field: {key}")
             elif not isinstance(d[key], typ):
                 errs.append(f"[{i}] field {key} must be {typ.__name__}")
-        if d.get("tier") not in TIERS:
-            errs.append(f"[{i}] tier must be one of {sorted(TIERS)}")
+        if d.get("tier") not in tiers:
+            errs.append(f"[{i}] tier must be one of {sorted(tiers)}")
         if not all(isinstance(u, str) for u in d.get("source_urls", [])):
             errs.append(f"[{i}] source_urls must be list[str]")
         slots.append(d.get("slot"))
@@ -38,8 +42,9 @@ def validate(directions) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="directions.json 校验")
     ap.add_argument("--file", type=Path, required=True)
+    ap.add_argument("--tiers", choices=list(TIER_SETS), default="phase2")
     args = ap.parse_args(argv)
-    errs = validate(json.loads(args.file.read_text()))
+    errs = validate(json.loads(args.file.read_text()), TIER_SETS[args.tiers])
     if errs:
         for e in errs:
             print(e)

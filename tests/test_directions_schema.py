@@ -57,3 +57,16 @@ def test_cli_exit_codes(tmp_path):
                          "--file", str(bad)], capture_output=True, text=True)
     assert r2.returncode == 1
     assert "tier" in r2.stdout + r2.stderr
+
+
+def test_phase3_tiers_accepted():
+    dirs = [{"slot": "a", "title": "FP8", "source_urls": ["u1"], "idea": "quant",
+             "tier": "quantization", "needs_training": False}]
+    assert dsx.validate(dirs, dsx.PHASE3_TIERS) == []
+
+
+def test_phase3_tier_rejected_under_phase2_set():
+    dirs = [{"slot": "a", "title": "FP8", "source_urls": ["u1"], "idea": "quant",
+             "tier": "quantization", "needs_training": False}]
+    errs = dsx.validate(dirs, dsx.PHASE2_TIERS)
+    assert any("tier must be one of" in e for e in errs)
