@@ -75,9 +75,18 @@ uv run python -m scripts.phase3_state gate --base-lat <当前base延迟> --cand-
 "没主意"时重读论文、组合近似命中、试更激进改动(对齐 autoresearch 纪律)。
 
 ## 模式 3c:多卡并行扩展
-1. 取最终单卡 base;选 ≤3 SOTA 并行方案(TP/PP/EP/SP/replica,框架而定)。
+1. 取最终单卡 base;选 ≤3 SOTA 并行方案(框架而定)。**主指标是单条延迟**,只有 **TP/SP**
+   能降单条延迟;**replica/数据并行只增吞吐,不降单条延迟**——别拿它当延迟方案。
 2. 逐方案(`multi_card/scheme_<name>/`):多卡实现 adapter(`dispatch` 要够 N 卡),
    benchmark(同测单条延迟主指标)+ compute_metrics;`parallel_add`/`parallel_record`。
+   - **框架无原生多卡推理时自实现 TP/SP**:并行逻辑写进 adapter(单进程 benchmark 测不了多进程),
+     用 `scripts/benchmark_dist.py` 桥接——torchrun 起 N 进程、复用冻结的 `benchmark.measure`、
+     各 rank 跑同一固定子集**锁步**(collective 自然同步;固定种子→各 rank 输出一致)、**仅 rank0 写盘**。
+     这样协议与单卡完全一致、可比。
+   - **collective(all-reduce 等)用 fp32 累加**:低精度累加误差随卡数增长,world≥4 时常击穿 1% 质量门。
+   - **显式 per-rank 设备**:有的加载器对 `device="cuda"` 不认 `set_device`,会把各 rank 都堆到 0 卡 → 传 `cuda:{local_rank}`。
+   - **docker 多卡**:`--gpus device=a,b` 可能报 "cannot set both Count and DeviceIDs" → 改用 `NVIDIA_VISIBLE_DEVICES`。
+   - 并行延迟收益**受通信限制、次线性递减**;遍历几个卡数,取"质量达标里最小延迟",别默认越多越快。
 3. `select_final`:质量达标里最小延迟者 = final(`gpu_count` 随之),无则回落单卡 base。
    `sub_phase=done`。交付最终生产级多卡推理方案。
 
@@ -88,3 +97,29 @@ uv run python -m scripts.phase3_state gate --base-lat <当前base延迟> --cand-
 - 测速抖动:加大 warmup/iters,固定子集复测。
 - 卡不足:训练型/多卡排队,非训练优先。
 - 中断:`resume` 按 sub_phase 续,已 scored slot 跳过、已晋升 base 不回退。
+
+## 通用工程坑速查(跨任务复用)
+与具体任务/模型无关、最易踩且最该提前规避的工程坑:
+
+### 测速可比性(多租户/共享节点尤甚)
+- **比"固定子集均值",不信单点快照**:逐迭代耗时随 GPU 降频/同租户竞争抖动很大,但固定子集
+  的**均值跨卡稳定**(抖动会被整轮平均掉)。同一固定子集的均值才是可比量,gate 也判均值。
+- **p50→p99 大跨度未必是抖动**:常是真实的逐样本计算量差异(输入尺寸/序列长度不同)。
+  别误判为不稳定去乱调 warmup;均值仍可比。
+- **子集大小权衡**:严格 ≤1% 质量门配小子集,在阈值附近**噪声大、判定脆**;
+  钉子集时在"测速够快"与"质量门够准"之间取平衡(越激进的有损杠杆越需要更大子集)。
+- 质量与算力竞争**无关**:质量可在任意卡先筛,过门候选再到干净卡补测延迟。
+
+### compile / kernel 杠杆(compile tier)
+- **容器内编译后端会调 getpass/getuser**:以非 passwd 内 UID 跑容器会崩 → 注入
+  `USER`/`LOGNAME`/`HOME` 与可写 cache 目录(`*_CACHE_DIR`/`XDG_CACHE_HOME`)。
+- **动态输入形状会在计时窗内重编译**,污染延迟 → 在 `load_model`(不计时)里**预热所有不同形状**,
+  让计时窗零重编译;预热须用与计时相同的关键参数(如 batch/guidance 模式),否则编译的是另一条图。
+- **挂持久化 compile cache**(host 目录 → 容器),避免每次从头编译;激进 autotune 模式编译很慢,要留预算。
+
+### 缓存挂载与加载器
+- caches 优先 `:ro`,但**下载器/加载器常需写锁**(.lock)即便权重已缓存 → 该 cache 放开为 RW。
+- 本地权重复用:让加载器从本地目录解析(cwd/显式路径),避免每次走网络。
+
+(多卡 TP/SP 的坑见上文"模式 3c";要点:adapter 内自实现 + `benchmark_dist.py` 桥接、collective 走 fp32、
+显式 `cuda:{local_rank}`、`NVIDIA_VISIBLE_DEVICES`、收益次线性。)

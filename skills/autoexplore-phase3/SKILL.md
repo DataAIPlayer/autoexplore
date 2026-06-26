@@ -53,6 +53,10 @@ benchmark+evaluate 评分 → `gate` 判双门 → 过门 `promote_base`+commit�
 ### 模式 3c:多卡并行扩展(一次性,≤3 SOTA 方案)
 取最终单卡 base → 选 ≤3 并行方案(TP/PP/EP/SP/replica)→ 逐个多卡实现 adapter →
 benchmark(同测单条延迟)+ 质量校验 → **质量达标里最小延迟者 = final** → `sub_phase=done`。交付。
+- 单条延迟只有 **TP/SP** 有效;**replica/数据并行只增吞吐、不降单条延迟**,别用它当延迟方案。
+- 框架无原生多卡推理时,在 adapter 里自实现 TP/SP,用 `scripts/benchmark_dist.py`
+  (torchrun 包装、复用冻结的 `benchmark.measure`、各 rank 同种子锁步、rank0 写盘)桥接单进程测速协议。
+- 并行延迟收益受通信带宽限制、**次线性递减**;选"质量达标里最小延迟"的卡数,别默认越多越快。
 
 完整细则见 [references/speedup-loop.md](references/speedup-loop.md)。
 
@@ -63,7 +67,19 @@ benchmark(同测单条延迟)+ 质量校验 → **质量达标里最小延迟者
 - 容器/训练输出进 log,只失败时 `tail`;逐实验重试上限 3,crash 不阻塞同轮兄弟。
 - 中断可恢复:入口 `resume` 读 state.json;已 scored slot 跳过、已晋升 base 不回退、按 sub_phase 续。
 - **容器纪律(继承前阶段)**:每次 `docker run` 带 `--user $UID:$GID --runtime=nvidia`;
-  caches 以 `:ro` 挂 `/cache/{modelscope,huggingface,torch}`,env 注入对应 `*_CACHE`/`*_HOME`。
+  caches 优先 `:ro` 挂 `/cache/{modelscope,huggingface,torch}`,env 注入对应 `*_CACHE`/`*_HOME`;
+  **但若加载器需写锁(下载器的 .lock 等)则放开为 RW**——别为纪律牺牲能跑。
+
+## 通用加速经验(与任务/模型无关,跨 run 复用)
+- **先审计基线冗余/无效计算**:对"当前调用方式"是 no-op 的分支、重复前向、未用的条件,
+  常是近乎免费的大头提速(输出可逐位不变)。在搜复杂杠杆前先摘掉它。
+- **杠杆要对齐硬件能力**:低精度格式/特定 kernel 需对应算力支持(如某些低精度需匹配 tensor-core),
+  否则"SOTA"杠杆在目标卡上可能 0 收益甚至更慢。复现前先核对目标卡能力。
+- **预算纪律(1% 质量被叠加杠杆共享)**:先吃无损/数值等价杠杆(去冗余、等价 kernel),
+  把质量预算留给有损杠杆(精度↓/迭代步数↓/缓存跳算);一个杠杆吃掉预算会让后续过不了门。
+- **复用预训练加速产物需验质**:为基座训练的蒸馏/量化产物**未必迁移**到微调/变体模型,
+  必过冻结 `evaluate.py` 校验,别假设可迁移。
+- 详细工程坑(compile/多卡/测速)见 [references/speedup-loop.md](references/speedup-loop.md) 末节。
 
 ## 脚本速查
 
@@ -71,6 +87,7 @@ benchmark(同测单条延迟)+ 质量校验 → **质量达标里最小延迟者
 |------|------|
 | `scripts/phase3_state.py {init,resume,gate,dispatch,base-get}` | 状态/双门/派发(确定性核心) |
 | `scripts/benchmark.py` | 冻结测速协议:产 speed.json + predictions.jsonl |
+| `scripts/benchmark_dist.py` | 3c 多卡测速:torchrun 包装、复用 `benchmark.measure`(协议不变)、rank0 写盘 |
 | `scripts/directions_schema.py --file <f> --tiers phase3` | 方向 schema 校验(phase3 tier) |
 | `scripts/train_launch.py` | 量化校准/草稿训练:数据出处/多卡启动/ckpt 续/预算 |
 | `scripts/{gpu_select,docker_env,run_inference,compute_metrics,progress}.py` | 复用前阶段 |
